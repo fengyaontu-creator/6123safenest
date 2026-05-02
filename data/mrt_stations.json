@@ -1,57 +1,242 @@
-[
-  {
-    "name": "Boon Lay",
-    "line": "East West Line",
-    "area": "Jurong West",
-    "aliases": ["jurong west", "boon lay", "ntu"],
-    "latitude": 1.3386,
-    "longitude": 103.7061,
-    "typical_distance_km": 0.7,
-    "commute_to_cbd_min": 42,
-    "commute_to_ntu_min": 18
+{
+  "metadata": {
+    "description": "SafeNest 项目 mock 数据 — 新加坡 MRT 站到 NTU 和 CBD 的通勤时间",
+    "version": "1.0",
+    "last_updated": "2026-05-02",
+    "data_source": "approximated from LTA public data, NTU official website, Google Maps",
+    "commute_time_basis": "weekday peak hours, including transfers and last-mile bus/walk",
+    "commute_time_unit": "minutes",
+    "coverage_note": "10 个代表性 MRT 站,覆盖 listings.csv 所有 20 条房源所在区域",
+    "usage_for_location_agent": "通过 nearby_areas 字段匹配房源地址中的区域名,返回该站的 commute_minutes 即可作为该房源的通勤时间估算。"
   },
-  {
-    "name": "Pioneer",
-    "line": "East West Line",
-    "area": "Jurong West Extension",
-    "aliases": ["pioneer", "jurong west extension"],
-    "latitude": 1.3375,
-    "longitude": 103.6974,
-    "typical_distance_km": 0.9,
-    "commute_to_cbd_min": 45,
-    "commute_to_ntu_min": 14
+  "destinations": {
+    "NTU": {
+      "full_name": "Nanyang Technological University",
+      "address": "50 Nanyang Avenue, Singapore 639798",
+      "coordinates": {
+        "lat": 1.3483,
+        "lng": 103.6831
+      },
+      "nearest_mrt": [
+        "EW28 Pioneer",
+        "EW27 Boon Lay"
+      ],
+      "note": "需从最近 MRT 站换乘 179 / 199 公交进入校园"
+    },
+    "CBD_Raffles_Place": {
+      "full_name": "Raffles Place (Central Business District)",
+      "address": "Raffles Place, Singapore 048616",
+      "coordinates": {
+        "lat": 1.284,
+        "lng": 103.8511
+      },
+      "nearest_mrt": [
+        "EW14/NS26 Raffles Place"
+      ],
+      "note": "新加坡金融区中心"
+    }
   },
-  {
-    "name": "Clementi",
-    "line": "East West Line",
-    "area": "Clementi",
-    "aliases": ["clementi", "sunset way"],
-    "latitude": 1.3151,
-    "longitude": 103.7652,
-    "typical_distance_km": 0.6,
-    "commute_to_cbd_min": 30,
-    "commute_to_ntu_min": 32
-  },
-  {
-    "name": "Tanjong Pagar",
-    "line": "East West Line",
-    "area": "CBD",
-    "aliases": ["tanjong pagar", "cbd", "raffles place"],
-    "latitude": 1.2765,
-    "longitude": 103.8459,
-    "typical_distance_km": 0.4,
-    "commute_to_cbd_min": 8,
-    "commute_to_ntu_min": 58
-  },
-  {
-    "name": "Serangoon",
-    "line": "North East Line / Circle Line",
-    "area": "Serangoon",
-    "aliases": ["serangoon", "kovan"],
-    "latitude": 1.3506,
-    "longitude": 103.8728,
-    "typical_distance_km": 0.8,
-    "commute_to_cbd_min": 28,
-    "commute_to_ntu_min": 60
-  }
-]
+  "stations": [
+    {
+      "station_id": "EW27",
+      "name": "Boon Lay",
+      "lines": [
+        "East-West Line"
+      ],
+      "coordinates": {
+        "lat": 1.3387,
+        "lng": 103.706
+      },
+      "nearby_areas": [
+        "Jurong West",
+        "Boon Lay"
+      ],
+      "commute_minutes": {
+        "NTU": 18,
+        "CBD_Raffles_Place": 35
+      },
+      "remarks": "近 Jurong Point 商场,生活配套成熟"
+    },
+    {
+      "station_id": "EW28",
+      "name": "Pioneer",
+      "lines": [
+        "East-West Line"
+      ],
+      "coordinates": {
+        "lat": 1.3375,
+        "lng": 103.6973
+      },
+      "nearby_areas": [
+        "Jurong West",
+        "Pioneer"
+      ],
+      "commute_minutes": {
+        "NTU": 12,
+        "CBD_Raffles_Place": 38
+      },
+      "remarks": "离 NTU 最近的 MRT 站,179 路公交直达校园"
+    },
+    {
+      "station_id": "NS2",
+      "name": "Bukit Batok",
+      "lines": [
+        "North-South Line"
+      ],
+      "coordinates": {
+        "lat": 1.349,
+        "lng": 103.7497
+      },
+      "nearby_areas": [
+        "Bukit Batok"
+      ],
+      "commute_minutes": {
+        "NTU": 40,
+        "CBD_Raffles_Place": 35
+      },
+      "remarks": "需在 Jurong East 换 EWL 再转公交去 NTU"
+    },
+    {
+      "station_id": "NS4",
+      "name": "Choa Chu Kang",
+      "lines": [
+        "North-South Line",
+        "Bukit Panjang LRT"
+      ],
+      "coordinates": {
+        "lat": 1.3854,
+        "lng": 103.7444
+      },
+      "nearby_areas": [
+        "Choa Chu Kang"
+      ],
+      "commute_minutes": {
+        "NTU": 50,
+        "CBD_Raffles_Place": 48
+      },
+      "remarks": "西北部住宅区,通勤时间较长"
+    },
+    {
+      "station_id": "NS9",
+      "name": "Woodlands",
+      "lines": [
+        "North-South Line",
+        "Thomson-East Coast Line"
+      ],
+      "coordinates": {
+        "lat": 1.4368,
+        "lng": 103.7864
+      },
+      "nearby_areas": [
+        "Woodlands",
+        "Sembawang"
+      ],
+      "commute_minutes": {
+        "NTU": 70,
+        "CBD_Raffles_Place": 52
+      },
+      "remarks": "近马来西亚关卡,通勤到 NTU 较远"
+    },
+    {
+      "station_id": "NS13",
+      "name": "Yishun",
+      "lines": [
+        "North-South Line"
+      ],
+      "coordinates": {
+        "lat": 1.4294,
+        "lng": 103.835
+      },
+      "nearby_areas": [
+        "Yishun"
+      ],
+      "commute_minutes": {
+        "NTU": 75,
+        "CBD_Raffles_Place": 45
+      },
+      "remarks": "北部成熟住宅区,租金低但通勤远"
+    },
+    {
+      "station_id": "EW2",
+      "name": "Tampines",
+      "lines": [
+        "East-West Line",
+        "Downtown Line"
+      ],
+      "coordinates": {
+        "lat": 1.354,
+        "lng": 103.945
+      },
+      "nearby_areas": [
+        "Tampines",
+        "Pasir Ris"
+      ],
+      "commute_minutes": {
+        "NTU": 65,
+        "CBD_Raffles_Place": 30
+      },
+      "remarks": "东部区域中心,商场和配套丰富"
+    },
+    {
+      "station_id": "NE13",
+      "name": "Hougang",
+      "lines": [
+        "North-East Line"
+      ],
+      "coordinates": {
+        "lat": 1.3713,
+        "lng": 103.8924
+      },
+      "nearby_areas": [
+        "Hougang",
+        "Sengkang"
+      ],
+      "commute_minutes": {
+        "NTU": 75,
+        "CBD_Raffles_Place": 32
+      },
+      "remarks": "近 CBD 通勤友好,但去 NTU 需多次换乘"
+    },
+    {
+      "station_id": "NS17",
+      "name": "Bishan",
+      "lines": [
+        "North-South Line",
+        "Circle Line"
+      ],
+      "coordinates": {
+        "lat": 1.3508,
+        "lng": 103.8485
+      },
+      "nearby_areas": [
+        "Bishan",
+        "Toa Payoh",
+        "Ang Mo Kio"
+      ],
+      "commute_minutes": {
+        "NTU": 60,
+        "CBD_Raffles_Place": 25
+      },
+      "remarks": "中部交通枢纽,双线交汇"
+    },
+    {
+      "station_id": "EW23",
+      "name": "Clementi",
+      "lines": [
+        "East-West Line"
+      ],
+      "coordinates": {
+        "lat": 1.3151,
+        "lng": 103.7649
+      },
+      "nearby_areas": [
+        "Clementi"
+      ],
+      "commute_minutes": {
+        "NTU": 30,
+        "CBD_Raffles_Place": 25
+      },
+      "remarks": "近新加坡国立大学,平衡通勤位置"
+    }
+  ]
+}

@@ -1,1 +1,21 @@
-address,bedrooms,size_sqft,monthly_rent,listed_date
+Address,Room_Type,Area_sqm,Monthly_Rent_SGD,Listing_Date
+Block 123 Jurong West St 13,3-Room,65,2200,2026-04-15
+Block 456 Jurong West Ave 5,4-Room,90,2600,2026-04-20
+Block 789 Jurong West St 42,3-Room,67,2100,2026-04-22
+Block 234 Jurong West St 25,2-Room,45,1800,2026-04-10
+Block 567 Jurong West Ave 1,5-Room,110,2900,2026-04-25
+Block 890 Jurong West St 91,4-Room,92,2500,2026-04-12
+Block 145 Boon Lay Drive,3-Room,65,2050,2026-04-18
+Block 268 Bukit Batok St 21,4-Room,90,2700,2026-04-21
+Block 312 Choa Chu Kang Ave 4,3-Room,68,2150,2026-04-23
+Block 415 Woodlands Drive 50,4-Room,92,2400,2026-04-14
+Block 528 Yishun Ring Road,5-Room,110,2800,2026-04-19
+Block 631 Sembawang Crescent,3-Room,65,1950,2026-04-08
+Block 744 Tampines St 41,4-Room,93,2900,2026-04-26
+Block 857 Pasir Ris Drive 1,4-Room,90,2850,2026-04-17
+Block 960 Sengkang East Way,3-Room,67,2400,2026-04-24
+Block 173 Hougang Ave 8,4-Room,91,2750,2026-04-13
+Block 286 Bishan St 13,4-Room,90,3300,2026-04-16
+Block 399 Toa Payoh Lor 4,3-Room,68,2900,2026-04-27
+Block 412 Ang Mo Kio Ave 3,4-Room,92,3100,2026-04-11
+Block 525 Clementi Ave 4,3-Room,67,2700,2026-04-09
