@@ -47,7 +47,8 @@ def test_offline_report_is_human_readable():
 
 
 def test_synthesizer_instruction_reads_adk_state_keys():
-    assert "{location_output}" in synthesizer_agent.instruction
-    assert "{contract_output}" in synthesizer_agent.instruction
-    assert "{price_output}" in synthesizer_agent.instruction
-    assert "{risk_output}" in synthesizer_agent.instruction
+    assert "location_output" in synthesizer_agent.instruction
+    assert "contract_output" in synthesizer_agent.instruction
+    assert "price_output" in synthesizer_agent.instruction
+    assert "risk_output" in synthesizer_agent.instruction
+    assert "{location_output}" not in synthesizer_agent.instruction

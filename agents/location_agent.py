@@ -13,12 +13,32 @@ from google.adk.agents import LlmAgent
 from google.adk.tools import FunctionTool
 
 
-def _load_stations(path: Path = settings.mrt_stations_path) -> list[dict[str, Any]]:
+DESTINATION_ALIASES = {
+    "CBD": "CBD_Raffles_Place",
+    "CBD_RAFFLES_PLACE": "CBD_Raffles_Place",
+    "RAFFLES_PLACE": "CBD_Raffles_Place",
+    "NTU": "NTU",
+}
+
+
+def _load_mrt_data(path: Path = settings.mrt_stations_path) -> dict[str, Any]:
     if not path.exists():
-        return []
+        return {"stations": [], "destinations": {}, "metadata": {}}
     with path.open(encoding="utf-8") as fh:
         data = json.load(fh)
-    return data if isinstance(data, list) else []
+    if isinstance(data, list):
+        return {"stations": data, "destinations": {}, "metadata": {}}
+    if isinstance(data, dict):
+        return {
+            "stations": data.get("stations", []),
+            "destinations": data.get("destinations", {}),
+            "metadata": data.get("metadata", {}),
+        }
+    return {"stations": [], "destinations": {}, "metadata": {}}
+
+
+def _load_stations(path: Path = settings.mrt_stations_path) -> list[dict[str, Any]]:
+    return _load_mrt_data(path)["stations"]
 
 
 def _haversine_km(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
@@ -35,12 +55,38 @@ def _haversine_km(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
 
 
 def _match_address_area(address: str, stations: list[dict[str, Any]]) -> dict[str, Any] | None:
+    if not address:
+        return None
     address_norm = address.lower()
     for station in stations:
-        aliases = [station.get("name", ""), *station.get("aliases", [])]
+        aliases = [
+            station.get("name", ""),
+            station.get("station_id", ""),
+            *station.get("aliases", []),
+            *station.get("nearby_areas", []),
+        ]
         if any(alias.lower() in address_norm for alias in aliases):
             return station
     return None
+
+
+def _station_line_label(station: dict[str, Any]) -> str:
+    lines = station.get("lines")
+    if isinstance(lines, list) and lines:
+        return " / ".join(lines)
+    return station.get("line", "Unknown")
+
+
+def _station_area_label(station: dict[str, Any]) -> str:
+    areas = station.get("nearby_areas")
+    if isinstance(areas, list) and areas:
+        return areas[0]
+    return station.get("area", station.get("name", "Unknown"))
+
+
+def _destination_key(destination: str) -> str:
+    normalized = destination.strip().upper().replace(" ", "_")
+    return DESTINATION_ALIASES.get(normalized, destination)
 
 
 def nearest_mrt(address: str) -> dict[str, Any]:
@@ -52,20 +98,28 @@ def nearest_mrt(address: str) -> dict[str, Any]:
 
     matched = _match_address_area(address, stations) or stations[0]
     distance = float(matched.get("typical_distance_km", 0.8))
+    coords = matched.get("coordinates") or {}
     return {
         "found": True,
+        "station_id": matched.get("station_id"),
         "station": matched["name"],
-        "line": matched.get("line", "Unknown"),
+        "line": _station_line_label(matched),
         "distance_km": round(distance, 2),
         "estimated_walk_min": round(distance / 0.08),
-        "matched_area": matched.get("area", matched["name"]),
+        "matched_area": _station_area_label(matched),
+        "coordinates": {
+            "lat": coords.get("lat"),
+            "lng": coords.get("lng"),
+        },
+        "remarks": matched.get("remarks"),
     }
 
 
 def commute_estimate(address: str, destination: str = "CBD") -> dict[str, Any]:
     """Estimate transit time to a common destination such as CBD or NTU."""
 
-    stations = _load_stations()
+    mrt_data = _load_mrt_data()
+    stations = mrt_data["stations"]
     matched = _match_address_area(address, stations) if stations else None
     if not matched:
         return {
@@ -75,13 +129,21 @@ def commute_estimate(address: str, destination: str = "CBD") -> dict[str, Any]:
             "note": "Address did not match mock station areas.",
         }
 
-    key = f"commute_to_{destination.lower()}_min"
-    minutes = int(matched.get(key, matched.get("commute_to_cbd_min", 40)))
+    destination_key = _destination_key(destination)
+    commute_minutes = matched.get("commute_minutes", {})
+    if destination_key in commute_minutes:
+        minutes = int(commute_minutes[destination_key])
+    else:
+        legacy_key = f"commute_to_{destination.lower()}_min"
+        minutes = int(matched.get(legacy_key, matched.get("commute_to_cbd_min", 40)))
+    destination_info = mrt_data["destinations"].get(destination_key, {})
     return {
-        "destination": destination,
+        "destination": destination_key,
+        "destination_name": destination_info.get("full_name", destination),
         "estimated_minutes": minutes,
         "confidence": "medium",
         "from_station": matched["name"],
+        "from_station_id": matched.get("station_id"),
     }
 
 
@@ -89,9 +151,10 @@ def assess_location(input_data: AgentInput | dict[str, Any]) -> AgentOutput:
     """Run the deterministic location assessment used by tests and CLI."""
 
     request = input_data if isinstance(input_data, AgentInput) else AgentInput(**input_data)
-    mrt = nearest_mrt(request.address)
-    cbd = commute_estimate(request.address, "CBD")
-    ntu = commute_estimate(request.address, "NTU")
+    address = request.address or ""
+    mrt = nearest_mrt(address)
+    cbd = commute_estimate(address, "CBD")
+    ntu = commute_estimate(address, "NTU")
 
     distance = float(mrt.get("distance_km", 2.0))
     score = max(0.0, min(100.0, 100 - distance * 20 - max(cbd["estimated_minutes"] - 35, 0)))
@@ -110,11 +173,11 @@ def assess_location(input_data: AgentInput | dict[str, Any]) -> AgentOutput:
 
     return AgentOutput(
         agent_name="location_agent",
-        summary=f"Location risk is {risk_level} for {request.address}.",
+        summary=f"Location risk is {risk_level} for {address}.",
         risk_level=risk_level,
         score=round(score, 1),
         findings=findings,
-        evidence=[mrt.get("matched_area", request.address), "mock MRT dataset"],
+        evidence=[mrt.get("matched_area", address), "mock MRT dataset"],
         recommendations=recommendations,
         data={"nearest_mrt": mrt, "commute": {"cbd": cbd, "ntu": ntu}},
     )
