@@ -18,7 +18,7 @@
 
 | 角色 | 职责范围 | 说明 |
 |------|--------|------|
-| **A（有代码基础）** | Orchestrator + Location Agent | 搭 LangGraph 状态图骨架，Day 3 起开发 Location Agent |
+| **A（有代码基础）** | Orchestrator + Location Agent | 搭 ADK 骨架（SequentialAgent + ParallelAgent），Day 3 起开发 Location Agent |
 | **B（你，有代码基础）** | Contract Agent + Guardrails + 集成 | 核心得分模块：PDF 解析 + Agentic RAG + 三层护栏 |
 | **C（代码基础较弱）** | Price Agent + Mock 数据准备 | CSV 查表逻辑简单，同时负责准备全组 mock 数据 |
 | **D（代码基础较弱）** | Risk Agent + 文档 / 演示材料 | CSV 查表 + CEA 名单核查，同时负责报告文档和截图 |
@@ -29,13 +29,14 @@
 
 ### Day 1–2：搭骨架（全员）
 
-**目标**：LangGraph 骨架跑通 + 全部 mock 数据就位
+**目标**：ADK 骨架跑通 + 全部 mock 数据就位
 
 #### A + B（代码）
 - [ ] 初始化 Git 仓库，建好目录结构（见下方）
 - [ ] 创建 `pyproject.toml` / `requirements.txt`，统一 Python 环境
-- [ ] 搭建 LangGraph 状态图：Orchestrator 节点 → 4 个空壳 Agent 节点 → Synthesizer 节点
-- [ ] 跑通 hello world：输入一个地址，4 个 agent 各返回一句 placeholder，Synthesizer 拼成报告
+- [ ] 搭建 ADK 骨架：`SequentialAgent` 包裹 `ParallelAgent(4 sub-agents)` + `synthesizer`
+- [ ] 跑通 hello world：输入一个地址，4 个 sub-agent 各返回一句 placeholder，Synthesizer 拼成报告
+- [ ] 验证 `adk web` 能在浏览器里跑同一个 root agent
 
 #### C + D（数据 + 环境）
 - [ ] 从 CEA 官网下载注册中介名单，清洗为 `data/cea_agents.csv`
@@ -43,7 +44,7 @@
 - [ ] 编写 20 条房源历史挂牌数据 → `data/listings.csv`（字段：地址、户型、面积、月租、发布日期）
 - [ ] 找一份公开的 CEA 标准租约 PDF → `data/cea_standard_lease.pdf`
 - [ ] 创建 1 份用于演示的样例租约 PDF → `data/sample_contract.pdf`（含故意设置的不公平条款）
-- [ ] 写 `.env.example` 模板（LLM API key、LangSmith key 等）
+- [ ] 写 `.env.example` 模板（`GOOGLE_API_KEY`、`GOOGLE_GENAI_USE_VERTEXAI` 等）
 
 #### Day 2 结束检查点
 - [ ] `python main.py --address "123 Jurong West" --rent 2000` 能跑通，输出 placeholder 报告
@@ -138,7 +139,7 @@ class AgentOutput(BaseModel):
 
 | 优先级 | 项目 | 负责人 | 预计耗时 | 风险 |
 |--------|------|--------|----------|------|
-| 1 | Observability — 接 LangSmith | A | 半天 | 低：加几行代码 + 截图 |
+| 1 | Observability — ADK Trace + OpenTelemetry | A | 半天 | 低：ADK 自带，加 exporter 即可 |
 | 2 | Evaluation — 10 case 测试集 | D | 半天 | 低：写测试数据 + 跑指标 |
 | 3 | Guardrail 加强 — 5 个 injection 攻击用例 | B | 半天 | 低：构造测试用例 |
 | 4 | Agentic RAG — Contract Agent 迭代检索 | B | 1 天 | 中：需要调 prompt |
@@ -165,7 +166,7 @@ safenest/
 │
 ├── agents/
 │   ├── __init__.py
-│   ├── orchestrator.py         # LangGraph 状态图 + 调度逻辑
+│   ├── orchestrator.py         # ADK 根 agent (SequentialAgent + ParallelAgent)
 │   ├── location_agent.py
 │   ├── contract_agent.py
 │   ├── price_agent.py
@@ -215,12 +216,12 @@ safenest/
 
 | 组件 | 选择 | 安装 |
 |------|------|------|
-| LLM | Gemini 2.0 Flash / GPT-4o-mini | `pip install google-generativeai` 或 `openai` |
-| Agent 框架 | LangGraph | `pip install langgraph langchain-core` |
+| LLM | Gemini 2.0 Flash（ADK 调用） | `pip install google-generativeai` |
+| Agent 框架 | **Google ADK (Python)** | `pip install google-adk` |
 | 向量库 | Chroma | `pip install chromadb` |
 | PDF 解析 | pypdf + pdfplumber | `pip install pypdf pdfplumber` |
 | PII 检测 | Presidio | `pip install presidio-analyzer presidio-anonymizer` |
-| 观测 | LangSmith | `pip install langsmith`（免费版） |
+| 观测 | ADK Trace + OpenTelemetry | `pip install opentelemetry-api opentelemetry-sdk`（ADK 自带 trace） |
 | 数据处理 | pandas | `pip install pandas` |
 
 ---
@@ -229,7 +230,7 @@ safenest/
 
 | 风险 | 触发条件 | 应对 |
 |------|----------|------|
-| LangGraph 学不会 | Day 2 骨架跑不通 | 退化为纯函数调用 + 手动编排，放弃 LangGraph bonus |
+| ADK 学不会 | Day 2 骨架跑不通 | 退化为 `asyncio.gather` 并行调用 + 手动编排，放弃框架 bonus |
 | Token 预算超支 | 单次运行 > $0.5 | 换 Gemini Flash；砍 CV agent；缩短 prompt |
 | 某个 Agent 做不出来 | Day 4 结束仍不能跑 | 用 LLM 直接生成 mock 输出，保证集成不阻塞 |
 | CV 效果差 | Day 6 验证不达标 | 直接砍掉，不影响 Baseline |

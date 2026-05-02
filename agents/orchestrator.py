@@ -1,1 +1,1 @@
-"""LangGraph orchestrator — A."""
+"""ADK root orchestrator (SequentialAgent → ParallelAgent → Synthesizer) — A."""
