@@ -1,0 +1,1 @@
+"""SafeNest entrypoint — A."""

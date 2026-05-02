@@ -1,0 +1,32 @@
+[tool.poetry]
+name = "safenest"
+version = "0.1.0"
+description = "SafeNest — Singapore rental agentic assistant (CA6123)"
+authors = ["SafeNest Team"]
+readme = "README.md"
+package-mode = false
+
+[tool.poetry.dependencies]
+python = "^3.11"
+langgraph = "*"
+langchain-core = "*"
+langsmith = "*"
+chromadb = "*"
+pypdf = "*"
+pdfplumber = "*"
+presidio-analyzer = "*"
+presidio-anonymizer = "*"
+pandas = "*"
+pydantic = "*"
+python-dotenv = "*"
+google-generativeai = "*"
+openai = "*"
+
+[tool.poetry.group.dev.dependencies]
+pytest = "*"
+pytest-cov = "*"
+ruff = "*"
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
