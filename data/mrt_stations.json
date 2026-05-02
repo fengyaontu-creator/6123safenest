@@ -1,1 +1,57 @@
-[]
+[
+  {
+    "name": "Boon Lay",
+    "line": "East West Line",
+    "area": "Jurong West",
+    "aliases": ["jurong west", "boon lay", "ntu"],
+    "latitude": 1.3386,
+    "longitude": 103.7061,
+    "typical_distance_km": 0.7,
+    "commute_to_cbd_min": 42,
+    "commute_to_ntu_min": 18
+  },
+  {
+    "name": "Pioneer",
+    "line": "East West Line",
+    "area": "Jurong West Extension",
+    "aliases": ["pioneer", "jurong west extension"],
+    "latitude": 1.3375,
+    "longitude": 103.6974,
+    "typical_distance_km": 0.9,
+    "commute_to_cbd_min": 45,
+    "commute_to_ntu_min": 14
+  },
+  {
+    "name": "Clementi",
+    "line": "East West Line",
+    "area": "Clementi",
+    "aliases": ["clementi", "sunset way"],
+    "latitude": 1.3151,
+    "longitude": 103.7652,
+    "typical_distance_km": 0.6,
+    "commute_to_cbd_min": 30,
+    "commute_to_ntu_min": 32
+  },
+  {
+    "name": "Tanjong Pagar",
+    "line": "East West Line",
+    "area": "CBD",
+    "aliases": ["tanjong pagar", "cbd", "raffles place"],
+    "latitude": 1.2765,
+    "longitude": 103.8459,
+    "typical_distance_km": 0.4,
+    "commute_to_cbd_min": 8,
+    "commute_to_ntu_min": 58
+  },
+  {
+    "name": "Serangoon",
+    "line": "North East Line / Circle Line",
+    "area": "Serangoon",
+    "aliases": ["serangoon", "kovan"],
+    "latitude": 1.3506,
+    "longitude": 103.8728,
+    "typical_distance_km": 0.8,
+    "commute_to_cbd_min": 28,
+    "commute_to_ntu_min": 60
+  }
+]
