@@ -40,9 +40,12 @@ async def run_with_adk_runner(request: AgentInput) -> str:
         app_name=settings.runner_app_name,
         user_id="cli_user",
         state={
+            "interface": "cli",
             "address": request.address,
             "rent": request.rent,
             "contract_path": request.contract_path,
+            "contract_text": request.contract_text,
+            "contract_file_name": request.contract_file_name,
             "bedrooms": request.bedrooms,
         },
     )

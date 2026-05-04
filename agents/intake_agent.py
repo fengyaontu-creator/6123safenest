@@ -19,7 +19,7 @@ from pydantic import Field
 REQUIRED_FIELDS = {
     "address": "rental address",
     "rent": "monthly rent",
-    "contract_path": "contract PDF path",
+    "contract_path": "contract PDF",
 }
 
 INTAKE_EXTRACTION_KEY = "intake_extraction"
@@ -30,11 +30,67 @@ FIELD_QUESTIONS = {
     "contract_path": "Please provide the rental contract PDF path, for example data/sample_contract.pdf.",
 }
 
+WEB_FIELD_QUESTIONS = {
+    **FIELD_QUESTIONS,
+    "contract_path": "Please upload the rental contract PDF file.",
+}
+
 
 def _content_text(ctx: InvocationContext) -> str:
     if not ctx.user_content or not ctx.user_content.parts:
         return ""
     return "\n".join(part.text or "" for part in ctx.user_content.parts)
+
+
+def _apply_event_state(ctx: InvocationContext, event: Event) -> None:
+    if event.actions and event.actions.state_delta:
+        ctx.session.state.update(event.actions.state_delta)
+
+
+def _clear_visible_actions(event: Event) -> Event:
+    event.actions.state_delta = {}
+    event.actions.transfer_to_agent = None
+    return event
+
+
+def _is_visible_final_report(event: Event) -> bool:
+    if event.author != "synthesizer" or not event.is_final_response():
+        return False
+    if not event.content or not event.content.parts:
+        return False
+    return any(part.text for part in event.content.parts)
+
+
+def _analysis_fallback_report(state: dict[str, Any], error: Exception) -> str:
+    from agents import AgentInput
+    from agents.contract_agent import assess_contract
+    from agents.location_agent import assess_location
+    from agents.price_agent import assess_price
+    from agents.risk_agent import assess_risk
+    from agents.synthesizer import format_report, synthesize_outputs
+
+    request = AgentInput(
+        address=state.get("address"),
+        rent=state.get("rent"),
+        contract_path=state.get("contract_path"),
+        contract_text=state.get("contract_text"),
+        contract_file_name=state.get("contract_file_name"),
+        bedrooms=state.get("bedrooms"),
+    )
+    output = synthesize_outputs(
+        [
+            assess_location(request),
+            assess_contract(request),
+            assess_price(request),
+            assess_risk(request),
+        ]
+    )
+    report = format_report(output)
+    return (
+        f"{report}\n\n"
+        "Note: The live Gemini specialist run was temporarily unavailable, "
+        f"so this report used the deterministic fallback. Error: {type(error).__name__}."
+    )
 
 
 def extract_rental_info_from_query(query: str) -> dict[str, Any]:
@@ -147,17 +203,32 @@ def create_intake_extractor_agent(model: str = settings.specialist_model) -> Llm
     )
 
 
+def has_contract_information(data: dict[str, Any]) -> bool:
+    return any(
+        data.get(key)
+        for key in (
+            "contract_path",
+            "contract_text",
+            "contract_file_uploaded",
+            "contract_file_name",
+        )
+    )
+
+
 def missing_required_fields(data: dict[str, Any]) -> list[str]:
     missing: list[str] = []
     for key in REQUIRED_FIELDS:
+        if key == "contract_path" and has_contract_information(data):
+            continue
         value = data.get(key)
         if value is None or value == "":
             missing.append(key)
     return missing
 
 
-def build_missing_info_question(missing: list[str]) -> str:
-    questions = [FIELD_QUESTIONS[key] for key in missing]
+def build_missing_info_question(missing: list[str], interface: str | None = None) -> str:
+    field_questions = WEB_FIELD_QUESTIONS if interface == "web" else FIELD_QUESTIONS
+    questions = [field_questions[key] for key in missing]
     if len(questions) == 1:
         return (
             "I need one more detail before running the rental analysis. "
@@ -184,7 +255,7 @@ class IntakeRouterAgent(BaseAgent):
 
         if self.sub_agents and self.sub_agents[0].name == "intake_extractor":
             async for event in self.sub_agents[0].run_async(ctx):
-                yield event
+                _apply_event_state(ctx, event)
 
         model_extracted = parse_model_extraction(
             ctx.session.state.get(INTAKE_EXTRACTION_KEY)
@@ -208,40 +279,58 @@ class IntakeRouterAgent(BaseAgent):
                 invocation_id=ctx.invocation_id,
                 content=types.Content(
                     role="model",
-                    parts=[types.Part(text=build_missing_info_question(missing))],
+                    parts=[
+                        types.Part(
+                            text=build_missing_info_question(
+                                missing,
+                                str(state.get("interface") or ""),
+                            )
+                        )
+                    ],
                 ),
-                actions=EventActions(
-                    state_delta={
-                        **extracted,
-                        "intake_status": "incomplete",
-                        "missing_fields": missing,
-                    },
-                    end_of_agent=True,
-                ),
+                actions=EventActions(end_of_agent=True),
+            )
+            ctx.session.state.update(
+                {
+                    **extracted,
+                    "intake_status": "incomplete",
+                    "missing_fields": missing,
+                }
             )
             return
 
-        yield Event(
-            author=self.name,
-            invocation_id=ctx.invocation_id,
-            content=types.Content(
-                role="model",
-                parts=[types.Part(text="Intake complete. Starting specialist analysis.")],
-            ),
-            actions=EventActions(
-                state_delta={
-                    **extracted,
-                    "intake_status": "complete",
-                    "missing_fields": [],
-                }
-            ),
+        ctx.session.state.update(
+            {
+                **extracted,
+                "intake_status": "complete",
+                "missing_fields": [],
+            }
         )
 
         for sub_agent in self.sub_agents:
             if sub_agent.name == "intake_extractor":
                 continue
-            async for event in sub_agent.run_async(ctx):
-                yield event
+            try:
+                async for event in sub_agent.run_async(ctx):
+                    _apply_event_state(ctx, event)
+                    if _is_visible_final_report(event):
+                        yield _clear_visible_actions(event)
+            except Exception as error:
+                ctx.end_invocation = True
+                yield Event(
+                    author="synthesizer",
+                    invocation_id=ctx.invocation_id,
+                    content=types.Content(
+                        role="model",
+                        parts=[
+                            types.Part(
+                                text=_analysis_fallback_report(ctx.session.state, error)
+                            )
+                        ],
+                    ),
+                    actions=EventActions(end_of_agent=True),
+                )
+                return
 
 
 __all__ = [
@@ -250,6 +339,7 @@ __all__ = [
     "create_intake_extractor_agent",
     "extract_rental_info_from_query",
     "FIELD_QUESTIONS",
+    "has_contract_information",
     "INTAKE_EXTRACTION_KEY",
     "missing_required_fields",
     "parse_model_extraction",
