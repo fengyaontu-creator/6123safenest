@@ -1,8 +1,26 @@
-__pycache__/
-*.pyc
-.venv/
+# secrets
 .env
-logs/*.log
+*.key
+
+# python
+__pycache__/
+*.py[cod]
 .pytest_cache/
 .ruff_cache/
-.chroma/
+.coverage
+htmlcov/
+
+# env
+.venv/
+venv/
+
+# ADK / runtime artifacts
+adk_apps/*/.adk/
+.sessions/
+*.log
+logs/*.log
+
+# OS / IDE
+.DS_Store
+.vscode/
+.idea/

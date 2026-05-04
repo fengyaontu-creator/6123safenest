@@ -1,12 +1,44 @@
-"""Risk agent — D."""
-from google.adk import LlmAgent
-# 导入外部工具函数
-from tools.cea_api import verify_cea_agent_status 
+"""General rental risk agent placeholder for the ADK team."""
 
-# 实例化 Risk Agent
-risk_agent = LlmAgent(
-    name="risk_analyst",
-    model="gemini-flash-latest", # 选用的其他模型
-    instruction="提示词待定",
-    tools=[verify_cea_agent_status] # ADK 会自动将这个 Python 函数转化为 Agent 可调用的工具
-)
+from __future__ import annotations
+
+from typing import Any
+
+from agents import AgentInput, AgentOutput, INTERNAL_JSON_OUTPUT_INSTRUCTION
+from config import settings
+from google.adk.agents import LlmAgent
+
+
+def assess_risk(input_data: AgentInput | dict[str, Any]) -> AgentOutput:
+    request = input_data if isinstance(input_data, AgentInput) else AgentInput(**input_data)
+    findings = ["Agent and landlord verification tools will be connected in Part D."]
+    if request.address:
+        findings.append("Address should be checked against viewing details and contract identity.")
+
+    return AgentOutput(
+        agent_name="risk_agent",
+        summary="Risk screening is running in placeholder mode.",
+        risk_level="unknown",
+        findings=findings,
+        recommendations=["Verify CEA salesperson registration before paying deposits."],
+        data={"address": request.address},
+    )
+
+
+def create_risk_agent(model: str = settings.specialist_model) -> LlmAgent:
+    return LlmAgent(
+        name="risk_agent",
+        model=model,
+        instruction=(
+            "Screen rental scam and compliance risks. Part D will add CEA agent "
+            "lookup and final policy checks.\n"
+            + INTERNAL_JSON_OUTPUT_INSTRUCTION
+        ),
+        output_key="risk_output",
+    )
+
+
+risk_agent = create_risk_agent()
+
+
+__all__ = ["assess_risk", "create_risk_agent", "risk_agent"]
