@@ -14,6 +14,8 @@ class AgentInput(BaseModel):
     address: str | None = Field(default=None, min_length=1)
     rent: float | None = Field(default=None, ge=0)
     contract_path: str | None = None
+    contract_text: str | None = None
+    contract_file_name: str | None = None
     bedrooms: int | None = Field(default=None, ge=0)
 
 

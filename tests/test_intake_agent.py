@@ -7,7 +7,9 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from agents.intake_agent import (
+    build_missing_info_question,
     extract_rental_info_from_query,
+    has_contract_information,
     missing_required_fields,
     parse_model_extraction,
 )
@@ -56,3 +58,22 @@ def test_parses_model_extraction_json_fence():
         "contract_path": "data/sample_contract.pdf",
         "bedrooms": 2,
     }
+
+
+def test_web_contract_question_asks_for_file_not_path():
+    question = build_missing_info_question(["contract_path"], interface="web")
+
+    assert "upload the rental contract PDF file" in question
+    assert "path" not in question.lower()
+
+
+def test_uploaded_contract_satisfies_contract_requirement():
+    data = {
+        "address": "123 Jurong West",
+        "rent": 2000,
+        "contract_file_uploaded": True,
+        "contract_file_name": "sample_contract.pdf",
+    }
+
+    assert has_contract_information(data) is True
+    assert missing_required_fields(data) == []
