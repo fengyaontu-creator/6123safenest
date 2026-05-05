@@ -1,0 +1,39 @@
+# SafeNest pre-commit hooks: 阻止 secrets 进 git + 通用代码卫生
+# 第一次 clone 后跑：poetry run pre-commit install
+# 之后每次 git commit 自动跑
+
+repos:
+  # 1. 通用卫生：去尾空格 / 文件末尾换行 / 大文件 / 合并冲突标记
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v6.0.0
+    hooks:
+      - id: trailing-whitespace
+      - id: end-of-file-fixer
+      - id: check-added-large-files
+        args: ["--maxkb=10240"]
+      - id: check-merge-conflict
+      - id: check-yaml
+      - id: check-toml
+      - id: detect-private-key
+
+  # 2. detect-secrets: 基于 entropy 和已知 token 格式扫描
+  - repo: https://github.com/Yelp/detect-secrets
+    rev: v1.5.0
+    hooks:
+      - id: detect-secrets
+        args: ["--baseline", ".secrets.baseline"]
+        exclude: |
+          (?x)(
+            poetry\.lock|
+            \.venv/|
+            data/cea_agents\.csv|
+            data/cea_standard_lease/|
+            data/sample_contract/
+          )
+
+  # 3. gitleaks: 更激进的 secret 检测，用 regex 抓 hardcoded key
+  #    detect-secrets 过滤了 == / != 比较里的字面量，gitleaks 会抓
+  - repo: https://github.com/gitleaks/gitleaks
+    rev: v8.29.0
+    hooks:
+      - id: gitleaks
