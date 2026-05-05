@@ -20,6 +20,8 @@ class Settings:
     mrt_stations_path: Path = DATA_DIR / "mrt_stations.json"
     listings_path: Path = DATA_DIR / "listings.csv"
     cea_agents_path: Path = DATA_DIR / "cea_agents.csv"
+    cea_standard_lease_dir: Path = DATA_DIR / "cea_standard_lease"
+    chroma_persist_dir: Path = BASE_DIR / ".chroma"
 
 
 settings = Settings()
