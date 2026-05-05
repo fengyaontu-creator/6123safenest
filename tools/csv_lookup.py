@@ -17,8 +17,8 @@ def verify_cea_agent_status(query_type: str, query_value: str) -> dict:
     }
     
     # 动态获取 API Key。如果你没填，依然可以尝试匿名访问（部分接口允许）
-    api_key = os.getenv("DATAGOVSG_API_KEY") #临时模拟服务器的环境变量配置，最后整合时需要调整
-    if api_key and api_key != "v2:85c0358d51743aface21565ce43dc812bed986bd395bab2e983226eec9238261:D2i_7I78e2CiqFS2pxLRTNiRIy0oSgAp":
+    api_key = os.getenv("DATAGOVSG_API_KEY")
+    if api_key:
         headers["x-api-key"] = api_key
     
     # resource_id 就是 dataset_id
