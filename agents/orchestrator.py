@@ -47,7 +47,11 @@ def run_offline_assessment(input_data: AgentInput | dict[str, Any]) -> AgentOutp
         assess_location(request),
         assess_contract(request),
         assess_price(request),
-        assess_risk(request),
+        assess_risk(
+            request,
+            agent_name=request.agent_name,
+            agent_reg_no=request.agent_reg_no,
+        ),
     ]
     return synthesize_outputs(outputs)
 

@@ -17,6 +17,8 @@ class AgentInput(BaseModel):
     contract_text: str | None = None
     contract_file_name: str | None = None
     bedrooms: int | None = Field(default=None, ge=0)
+    agent_name: str | None = None
+    agent_reg_no: str | None = None
 
 
 class AgentOutput(BaseModel):

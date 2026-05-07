@@ -21,6 +21,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--rent", type=float, default=None, help="Monthly rent in SGD.")
     parser.add_argument("--contract", default=None, help="Path to a rental contract PDF.")
     parser.add_argument("--bedrooms", type=int, default=None, help="Number of bedrooms.")
+    parser.add_argument("--agent-name", default=None, help="CEA salesperson name to verify.")
+    parser.add_argument("--agent-reg-no", default=None, help="CEA registration number to verify.")
     return parser
 
 
@@ -47,6 +49,8 @@ async def run_with_adk_runner(request: AgentInput) -> str:
             "contract_text": request.contract_text,
             "contract_file_name": request.contract_file_name,
             "bedrooms": request.bedrooms,
+            "agent_name": request.agent_name,
+            "agent_reg_no": request.agent_reg_no,
         },
     )
     runner = Runner(
@@ -87,11 +91,32 @@ async def run_with_adk_runner(request: AgentInput) -> str:
 def main() -> None:
     load_dotenv()
     args = build_parser().parse_args()
+
+    # Pre-parse contract PDF so contract_text is available in session state
+    contract_text: str | None = None
+    contract_file_name: str | None = None
+    if args.contract:
+        from pathlib import Path as _Path
+        contract_path = _Path(args.contract)
+        if contract_path.exists():
+            contract_file_name = contract_path.name
+            try:
+                from tools.pdf_parser import extract_pages
+                pages = extract_pages(contract_path)
+                if pages:
+                    contract_text = "\n\n".join(pages)
+            except Exception:
+                pass  # PDF parsing is best-effort; risk agent handles None
+
     request = AgentInput(
         address=args.address,
         rent=args.rent,
         contract_path=args.contract,
         bedrooms=args.bedrooms,
+        agent_name=args.agent_name,
+        agent_reg_no=args.agent_reg_no,
+        contract_text=contract_text,
+        contract_file_name=contract_file_name,
     )
     print(asyncio.run(run_with_adk_runner(request)))
 

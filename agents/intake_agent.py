@@ -76,13 +76,19 @@ def _analysis_fallback_report(state: dict[str, Any], error: Exception) -> str:
         contract_text=state.get("contract_text"),
         contract_file_name=state.get("contract_file_name"),
         bedrooms=state.get("bedrooms"),
+        agent_name=state.get("agent_name"),
+        agent_reg_no=state.get("agent_reg_no"),
     )
     output = synthesize_outputs(
         [
             assess_location(request),
             assess_contract(request),
             assess_price(request),
-            assess_risk(request),
+            assess_risk(
+                request,
+                agent_name=request.agent_name,
+                agent_reg_no=request.agent_reg_no,
+            ),
         ]
     )
     report = format_report(output)
@@ -170,7 +176,7 @@ def parse_model_extraction(value: Any) -> dict[str, Any]:
         return {}
 
     normalized: dict[str, Any] = {}
-    for key in ("address", "contract_path"):
+    for key in ("address", "contract_path", "agent_name", "agent_reg_no"):
         value = payload.get(key)
         if value not in (None, ""):
             normalized[key] = str(value).strip()
@@ -194,8 +200,12 @@ def create_intake_extractor_agent(model: str = settings.specialist_model) -> Llm
         instruction=(
             "Extract rental analysis intake information from the user's latest request. "
             "Use semantic understanding, not brittle keyword matching. Return JSON only "
-            "with these keys: address, rent, contract_path, bedrooms. Use null for any "
-            "unknown value. Do not analyze the rental. Do not call run_code, inspect "
+            "with these keys: address, rent, contract_path, bedrooms, agent_name, "
+            "agent_reg_no. Use null for any unknown value.\n\n"
+            "For agent_name: look for names near 'agent', 'salesperson', '中介', "
+            "or CEA registration numbers (RxxxxxxX format). "
+            "For agent_reg_no: look for CEA registration numbers (e.g. R123456A, P015022G).\n\n"
+            "Do not analyze the rental. Do not call run_code, inspect "
             "files, parse PDFs, or use tools. If the user uploaded a PDF but did not "
             "provide a usable path, set contract_path to null."
         ),
