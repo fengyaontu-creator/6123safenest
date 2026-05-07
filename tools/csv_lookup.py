@@ -16,7 +16,8 @@ def verify_cea_agent_status(query_type: str, query_value: str) -> dict:
         "Accept": "*/*"
     }
     
-    # 动态获取 API Key。如果你没填，依然可以尝试匿名访问（部分接口允许）
+    # 从环境变量读 API key (.env 中配置 DATAGOVSG_API_KEY=...)
+    # 没配也能跑：data.gov.sg 部分接口允许匿名访问
     api_key = os.getenv("DATAGOVSG_API_KEY")
     if api_key:
         headers["x-api-key"] = api_key
