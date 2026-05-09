@@ -8,28 +8,80 @@
 ## 架构总览
 
 ```mermaid
-graph TD
-    UI[User Input] --> GI[Guardrail-In]
-    GI --> |PII 检测 + Prompt Injection 过滤| INTAKE[Intake Router Agent]
-    INTAKE --> |提取字段| SEQ[SequentialAgent: safenest_analysis_workflow]
-    SEQ --> PARALLEL[ParallelAgent: safenest_parallel_specialists]
-    PARALLEL --> LOC[Location Agent]
-    PARALLEL --> CON[Contract Agent]
-    PARALLEL --> PRI[Price Agent]
-    PARALLEL --> RSK[Risk Agent]
-    LOC --> SYNTH[Synthesizer]
+graph TB
+    subgraph INPUT["User Input"]
+        CLI["CLI: python main.py<br/>--address --rent --contract"]
+        WEB["ADK Web: adk web<br/>chat + file upload"]
+    end
+
+    subgraph GR_IN["Guardrail-In"]
+        INJ["injection_filter.py<br/>17 regex patterns<br/>block / pass through"]
+        PII["pii_detector.py<br/>Microsoft Presidio<br/>redact NRIC / phone"]
+    end
+
+    subgraph ORCH["Orchestrator (orchestrator.py)"]
+        INTAKE["Intake Router Agent<br/>Gemini extract:<br/>address | rent | contract |<br/>bedrooms | agent | reg_no"]
+        PARALLEL["ParallelAgent<br/>safenest_parallel_specialists"]
+    end
+
+    subgraph FOUR["Four Specialist Agents (parallel)"]
+        LOC["Location Agent<br/>tools: nearest_mrt<br/>commute_estimate<br/>surrounding_amenities<br/>data: mrt_stations.json"]
+        CON["Contract Agent<br/>tools: search_cea_clause<br/>data: Chroma vector DB<br/>4 CEA template PDFs"]
+        PRI["Price Agent<br/>tools: lookup_market_rents<br/>data: listings.csv<br/>20 historical listings"]
+        RSK["Risk Agent<br/>tools: verify_cea_agent<br/>API: data.gov.sg<br/>fallback: cea_agents.csv"]
+    end
+
+    SYNTH["Synthesizer<br/>merge location + contract +<br/>price + risk outputs<br/>→ Markdown report"]
+
+    subgraph GR_OUT["Guardrail-Out"]
+        SCOPE["scope_guard.py<br/>15 out-of-scope patterns<br/>refuse legal / immigration"]
+    end
+
+    REPORT["Final Report"]
+
+    CLI --> INJ
+    WEB --> INJ
+    INJ --> PII
+    PII --> INTAKE
+    INTAKE --> PARALLEL
+    PARALLEL --> LOC
+    PARALLEL --> CON
+    PARALLEL --> PRI
+    PARALLEL --> RSK
+    LOC --> SYNTH
     CON --> SYNTH
     PRI --> SYNTH
     RSK --> SYNTH
-    SYNTH --> |汇总报告| GO[Guardrail-Out]
-    GO --> |PII 脱敏 + 越权拒绝| REPORT[Final Report]
+    SYNTH --> SCOPE
+    SCOPE --> REPORT
+
+    style INPUT fill:#1a1a2e,stroke:#e0e0e0,color:#e0e0e0
+    style GR_IN fill:#2d1f1f,stroke:#f87171,color:#fca5a5
+    style ORCH fill:#1f2d1f,stroke:#4ade80,color:#bbf7d0
+    style FOUR fill:#1f1f2d,stroke:#60a5fa,color:#bfdbfe
+    style SYNTH fill:#2d2d1f,stroke:#facc15,color:#fef08a
+    style GR_OUT fill:#2d1f2d,stroke:#c084fc,color:#e9d5ff
+    style REPORT fill:#1a2e1a,stroke:#34d399,color:#a7f3d0
 ```
 
 **执行顺序**：
 
-1. **Intake Router Agent**（串行第一步）— 从用户输入中提取 address / rent / contract_path / bedrooms / agent_name / agent_reg_no。若字段缺失，反问用户补齐。
-2. **4 个 Specialist Agent**（并行）— Location / Contract / Price / Risk 独立分析，各自写入 session state。
-3. **Synthesizer**（串行最后一步）— 读取 4 个 Agent 的 output_key，生成统一 Markdown 报告。
+1. **Guardrail-In** → 输入净化：Prompt Injection 过滤 + PII 脱敏
+2. **Intake Router Agent** → 串行第一步：Gemini 语义提取 6 个字段（address / rent / contract_path / bedrooms / agent_name / agent_reg_no），字段缺失则反问用户补齐
+3. **ParallelAgent** → 4 个 Specialist Agent 同时启动
+4. **Synthesizer** → 串行最后一步：读取 4 个 output_key，生成 Markdown 报告
+5. **Guardrail-Out** → 输出净化：越权话题拒绝（法律建议 / 签证咨询等）
+
+**每个 Agent 都有双路径**：
+- **确定性路径**：`assess_*()` 函数，Python 规则逻辑，零 LLM 调用，用于 CLI / 测试 / 离线场景
+- **ADK 路径**：`create_*_agent()` LlmAgent，LLM + 工具函数，用于 Web 交互
+
+| Agent | 核心工具 | 数据源 | 评分逻辑 |
+|------|---------|--------|---------|
+| Location | `nearest_mrt`, `commute_estimate`, `surrounding_amenities` | `mrt_stations.json`（10 站） | 通勤分(60%) + 周边分(40%)，0-100 |
+| Contract | `search_cea_clause` | Chroma（4 份 CEA 标准 PDF） | 4 条款关键词重叠度 → 偏差分(0-100) |
+| Price | `lookup_market_rents` | `listings.csv`（20 条） | 租金在市场中的百分位 → 分数映射 |
+| Risk | `verify_cea_agent` | data.gov.sg API + `cea_agents.csv`（30 条） | 注册(60) + 有效期(25) + 数据源(15) = 100 |
 
 ---
 
