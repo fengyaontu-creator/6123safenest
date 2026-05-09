@@ -687,7 +687,7 @@ Available data from session state:
   Agent name (if provided by user): {agent_name?}
   Agent CEA reg no (if provided by user): {agent_reg_no?}
   Contract file name: {contract_file_name?}
-  Extracted contract text: {contract_text?}
+  Extracted contract text (first 800 chars): {contract_text?}
 
 If the user has already provided an agent name or CEA registration number (see
 ``agent_name`` / ``agent_reg_no`` above), use it directly — no need to search

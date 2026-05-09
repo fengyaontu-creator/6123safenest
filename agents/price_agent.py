@@ -1,12 +1,23 @@
-"""Price agent — 评估月租是否合理,基于 listings.csv 中的同区房源。
+"""Price agent — rental market benchmarking via listings.csv — C.
 
-作者: C
-模仿 location_agent.py 的结构,严格遵守 AgentInput/AgentOutput schema。
+Two modes:
+  1. Deterministic (``assess_price``) — loads listings.csv, filters by area
+     and bedroom count, computes market statistics (median, percentiles), and
+     derives a reasonableness score for the user's rent.
+  2. ADK (``create_price_agent``) — LlmAgent with a ``lookup_market_rents``
+     tool that returns comparable listings for the LLM to reason about.
+
+Edge cases handled:
+  - CSV not found → degrade to LLM common-sense assessment
+  - No area match → expand to all-Singapore data
+  - No bedroom match → drop bedroom filter
+  - rent is None → skip scoring
 """
 
 from __future__ import annotations
 
 import csv
+import logging
 import statistics
 from pathlib import Path
 from typing import Any
@@ -16,327 +27,322 @@ from config import settings
 from google.adk.agents import LlmAgent
 from google.adk.tools import FunctionTool
 
+logger = logging.getLogger(__name__)
 
-# ===== 常量配置 =====
+# ---------------------------------------------------------------------------
+# Room type mapping
+# ---------------------------------------------------------------------------
+# Maps an integer bedroom count to the Room_Type values in listings.csv.
+# Special case: 0 (studio) and None are handled separately.
+BEDROOM_TO_ROOM_TYPE: dict[int, str] = {
+    0: "Studio",
+    1: "1-Room",
+    2: "2-Room",
+    3: "3-Room",
+    4: "4-Room",
+    5: "5-Room",
+}
 
-# 已知的新加坡区域名(按长度倒序排列,优先匹配长名,例如 "Jurong West" 优先于 "Jurong")
-KNOWN_SG_AREAS = sorted(
-    [
-        "Jurong West", "Jurong East", "Boon Lay", "Bukit Batok",
-        "Choa Chu Kang", "Woodlands", "Yishun", "Sembawang",
-        "Tampines", "Pasir Ris", "Sengkang", "Hougang",
-        "Bishan", "Toa Payoh", "Ang Mo Kio", "Clementi",
-    ],
-    key=len,
-    reverse=True,
-)
+# ---------------------------------------------------------------------------
+# Data loading helpers
+# ---------------------------------------------------------------------------
 
 
-# ===== 私有辅助函数(下划线开头) =====
+def load_listings(path: Path | str | None = None) -> list[dict[str, Any]]:
+    """Load all listings from the CSV file.
 
-def _load_listings(path: Path = settings.listings_path) -> list[dict[str, Any]]:
-    """从 listings.csv 读取所有房源,返回字典列表。
-
-    把数字字段(月租、面积)转成 float 便于后续计算。
+    Returns:
+        List of dicts with keys: address, room_type, area_sqm, monthly_rent_sgd,
+        listing_date.  Empty list if the file is missing or unreadable.
     """
-    if not path.exists():
+    csv_path = Path(path) if path else settings.listings_path
+    if not csv_path.exists():
+        logger.warning("Listings CSV not found: %s", csv_path)
         return []
-    listings: list[dict[str, Any]] = []
-    with path.open(encoding="utf-8") as fh:
+
+    rows: list[dict[str, Any]] = []
+    with csv_path.open(encoding="utf-8", newline="") as fh:
         reader = csv.DictReader(fh)
         for row in reader:
             try:
-                row["Monthly_Rent_SGD"] = float(row.get("Monthly_Rent_SGD", 0) or 0)
-                row["Area_sqm"] = float(row.get("Area_sqm", 0) or 0)
+                rows.append({
+                    "address": row.get("Address", "").strip(),
+                    "room_type": row.get("Room_Type", "").strip(),
+                    "area_sqm": float(row.get("Area_sqm", 0)),
+                    "monthly_rent_sgd": float(row.get("Monthly_Rent_SGD", 0)),
+                    "listing_date": row.get("Listing_Date", "").strip(),
+                })
             except (ValueError, TypeError):
-                continue  # 跳过坏数据
-            listings.append(row)
-    return listings
+                continue
+    return rows
 
 
-def _extract_area(address: str) -> str:
-    """从地址中提取区域名。
+def filter_by_area(listings: list[dict[str, Any]], address: str | None) -> list[dict[str, Any]]:
+    """Filter listings whose *address* contains the given area string (case-insensitive).
 
-    例如 'Block 123 Jurong West St 13' → 'Jurong West'。
-    匹配不到返回空字符串。
+    If *address* is empty or None, returns all listings.
     """
     if not address:
-        return ""
-    address_lower = address.lower()
-    for area in KNOWN_SG_AREAS:
-        if area.lower() in address_lower:
-            return area
-    return ""
+        return listings
+    addr_norm = address.lower().split()
+    # Match if ANY word from the query address appears in the listing address
+    return [
+        row for row in listings
+        if any(word in row["address"].lower() for word in addr_norm)
+    ]
 
 
-def _bedrooms_to_room_type(bedrooms: int | None) -> str:
-    """把 bedrooms 数量映射到 listings.csv 里的 Room_Type 标签。
+def filter_by_bedrooms(listings: list[dict[str, Any]], bedrooms: int | None) -> list[dict[str, Any]]:
+    """Filter listings matching the given bedroom count.
 
-    简化策略:bedrooms=3 → '3-Room'。匹配不到返回空字符串(不筛选)。
+    If *bedrooms* is None, returns all listings.
     """
     if bedrooms is None:
-        return ""
-    target = f"{bedrooms}-Room"
-    if target in {"2-Room", "3-Room", "4-Room", "5-Room"}:
-        return target
-    return ""
+        return listings
+    room_type = BEDROOM_TO_ROOM_TYPE.get(bedrooms)
+    if not room_type:
+        return listings
+    return [row for row in listings if row["room_type"] == room_type]
 
 
-# ===== 工具函数(LLM agent 会调用这些) =====
-
-def lookup_comparable_listings(address: str, room_type: str = "") -> dict[str, Any]:
-    """查找同区(及可选户型)的可比房源。
-
-    Args:
-        address: 完整地址,例如 'Block 123 Jurong West St 13'。
-        room_type: 可选户型筛选,例如 '3-Room'。空字符串表示不筛选。
+def compute_market_stats(listings: list[dict[str, Any]]) -> dict[str, Any]:
+    """Compute rental market statistics from a list of listings.
 
     Returns:
-        含 area, count, comparables 的字典。
+        Dict with ``count``, ``min``, ``max``, ``mean``, ``median``,
+        ``p25``, ``p75``, and ``rents`` (sorted list of all rents).
+        Values are None when the listing set is empty.
     """
-    listings = _load_listings()
     if not listings:
         return {
-            "found": False,
-            "message": "Listings dataset is unavailable.",
-            "comparables": [],
+            "count": 0,
+            "min": None, "max": None, "mean": None, "median": None,
+            "p25": None, "p75": None,
+            "rents": [],
         }
 
-    area = _extract_area(address)
-    if not area:
-        return {
-            "found": False,
-            "message": f"Could not parse a known SG area from address: {address}",
-            "comparables": [],
-        }
-
-    matched = [
-        r for r in listings
-        if area.lower() in str(r.get("Address", "")).lower()
-    ]
-    if room_type:
-        matched = [r for r in matched if r.get("Room_Type") == room_type]
-
-    return {
-        "found": True,
-        "area": area,
-        "room_type_filter": room_type or "any",
-        "count": len(matched),
-        "comparables": [
-            {
-                "address": r.get("Address"),
-                "room_type": r.get("Room_Type"),
-                "area_sqm": r.get("Area_sqm"),
-                "monthly_rent": r.get("Monthly_Rent_SGD"),
-                "listing_date": r.get("Listing_Date"),
-            }
-            for r in matched
-        ],
-    }
-
-
-def compute_price_statistics(address: str, room_type: str = "") -> dict[str, Any]:
-    """计算同区(及可选户型)房源的租金统计量。
-
-    Returns:
-        含 sample_size / min / max / median / mean / p25 / p75 的字典。
-    """
-    result = lookup_comparable_listings(address, room_type)
-    if not result.get("found") or result.get("count", 0) == 0:
-        return {
-            "found": False,
-            "area": result.get("area", ""),
-            "sample_size": 0,
-            "message": result.get("message", "No comparable listings found."),
-        }
-
-    rents = sorted(c["monthly_rent"] for c in result["comparables"])
+    rents = sorted(row["monthly_rent_sgd"] for row in listings)
     n = len(rents)
-    p25_idx = max(0, n // 4)
-    p75_idx = min(n - 1, (3 * n) // 4)
+
+    def _percentile(sorted_vals: list[float], p: float) -> float:
+        """Linear-interpolation percentile (matches numpy default)."""
+        k = (len(sorted_vals) - 1) * p / 100.0
+        f = int(k)
+        c = k - f
+        if f + 1 < len(sorted_vals):
+            return round(sorted_vals[f] + c * (sorted_vals[f + 1] - sorted_vals[f]), 1)
+        return round(sorted_vals[f], 1)
 
     return {
-        "found": True,
-        "area": result["area"],
-        "room_type_filter": result["room_type_filter"],
-        "sample_size": n,
-        "min": min(rents),
-        "max": max(rents),
-        "median": float(statistics.median(rents)),
-        "mean": round(statistics.mean(rents), 2),
-        "p25": float(rents[p25_idx]),
-        "p75": float(rents[p75_idx]),
+        "count": n,
+        "min": rents[0],
+        "max": rents[-1],
+        "mean": round(statistics.mean(rents), 1),
+        "median": _percentile(rents, 50),
+        "p25": _percentile(rents, 25),
+        "p75": _percentile(rents, 75),
+        "rents": rents,
     }
 
 
-def evaluate_rent_reasonableness(
-    rent: float,
-    address: str,
-    room_type: str = "",
-) -> dict[str, Any]:
-    """评估给定月租在同区是否合理,并给出议价建议。
+# ---------------------------------------------------------------------------
+# Scoring
+# ---------------------------------------------------------------------------
+
+
+def _percentile_rank(sorted_vals: list[float], value: float) -> float:
+    """Where does *value* fall in *sorted_vals*?  Returns 0‑100."""
+    if not sorted_vals:
+        return 50.0
+    below = sum(1 for v in sorted_vals if v < value)
+    return round(below / len(sorted_vals) * 100, 1)
+
+
+def _price_score(rent: float, stats: dict[str, Any]) -> dict[str, Any]:
+    """Derive a 0‑100 score from where the rent falls in the market.
 
     Returns:
-        含 verdict / score / suggestion / stats 的字典。
+        ``{"score": float, "position": str, "percentile": float, "advice": str}``
     """
-    stats = compute_price_statistics(address, room_type)
-    if not stats.get("found"):
-        return {
-            "verdict": "unknown",
-            "score": None,
-            "message": stats.get("message", "Insufficient data."),
-            "stats": stats,
-        }
+    pct = _percentile_rank(stats["rents"], rent)
 
-    median = stats["median"]
-    p25 = stats["p25"]
-    p75 = stats["p75"]
-    diff_pct = round(((rent - median) / median) * 100, 1)
+    if stats["count"] == 0:
+        return {"score": 50.0, "position": "unknown", "percentile": pct,
+                "advice": "No comparable listings available for benchmarking."}
 
-    # 评分逻辑:rent 越低于市场分越高
-    if rent <= p25:
-        verdict, score = "excellent_deal", 90.0
-    elif rent <= median:
-        verdict, score = "good_deal", 75.0
-    elif rent <= p75:
-        verdict, score = "fair_price", 55.0
+    p25 = stats["p25"] or 0
+    p75 = stats["p75"] or 0
+
+    if pct <= 10:
+        return {"score": 30.0, "position": "very_low", "percentile": pct,
+                "advice": "Rent is unusually low. Verify the listing is not a scam (too-good-to-be-true pricing)."}
+    elif pct <= 25:
+        return {"score": 70.0, "position": "below_market", "percentile": pct,
+                "advice": "Rent is below market average — good value if the unit condition is acceptable."}
+    elif pct <= 75:
+        return {"score": 90.0, "position": "market_rate", "percentile": pct,
+                "advice": "Rent is within the typical market range."}
+    elif pct <= 90:
+        return {"score": 50.0, "position": "above_market", "percentile": pct,
+                "advice": f"Rent is above the market median (median=SGD {stats['median']}). "
+                         f"Consider negotiating towards SGD {stats['p50'] or stats['median']}."}
     else:
-        verdict, score = "overpriced", 30.0
-
-    # 极端情况微调
-    if rent < p25 * 0.85:
-        score = 95.0
-    elif rent > p75 * 1.15:
-        score = 15.0
-
-    # 议价建议
-    if rent > median:
-        suggestion = f"Counter-offer at SGD {round(median):,} (area median)."
-    elif rent > p25:
-        suggestion = f"Try negotiating to SGD {round(p25):,} (25th percentile)."
-    else:
-        suggestion = "Rent is already below market 25th percentile; minimal negotiation room."
-
-    return {
-        "verdict": verdict,
-        "score": score,
-        "rent_input": rent,
-        "median": median,
-        "diff_from_median_pct": diff_pct,
-        "suggestion": suggestion,
-        "stats": stats,
-    }
+        return {"score": 30.0, "position": "very_high", "percentile": pct,
+                "advice": f"Rent is significantly above market (max comparable=SGD {stats['max']}). "
+                         f"Strongly consider negotiating or looking at other units."}
 
 
-# ===== 主入口:确定性评估(测试 / CLI 用这个) =====
+# ---------------------------------------------------------------------------
+# Deterministic assess_price
+# ---------------------------------------------------------------------------
+
 
 def assess_price(input_data: AgentInput | dict[str, Any]) -> AgentOutput:
-    """运行确定性的租金合理性评估。
+    """Run deterministic price assessment (CLI / tests)."""
+    request = input_data if isinstance(input_data, AgentInput) else AgentInput(**input_data)
 
-    供 tests/test_price.py 和 main.py CLI 直接调用,不经过 LLM。
-    严格按 AgentOutput schema 返回。
-    """
-    request = (
-        input_data
-        if isinstance(input_data, AgentInput)
-        else AgentInput(**input_data)
-    )
+    findings: list[str] = []
+    recommendations: list[str] = []
+    data: dict[str, Any] = {"rent": request.rent, "bedrooms": request.bedrooms}
 
-    address = request.address or ""
-    rent = request.rent
-    bedrooms = request.bedrooms
-    room_type = _bedrooms_to_room_type(bedrooms)
-
-    # ---- 输入缺失:优雅返回 ----
-    if not address or rent is None:
+    # No rent provided
+    if request.rent is None:
         return AgentOutput(
             agent_name="price_agent",
-            summary="Price assessment requires both an address and a rent value.",
+            summary="No rent amount was provided for price assessment.",
             risk_level="unknown",
-            findings=["Missing address or rent input."],
-            recommendations=["Provide --address and --rent to the CLI."],
-            data={"rent": rent, "address": address, "bedrooms": bedrooms},
+            score=None,
+            findings=["Rent amount is missing — cannot benchmark."],
+            recommendations=["Provide the monthly rent in SGD to receive market comparison."],
+            data=data,
         )
 
-    eval_result = evaluate_rent_reasonableness(rent, address, room_type)
-
-    # ---- 找不到可比数据:返回 unknown ----
-    if eval_result["score"] is None:
+    # Load data
+    all_listings = load_listings()
+    if not all_listings:
         return AgentOutput(
             agent_name="price_agent",
-            summary=f"No comparable listings for {address}; cannot benchmark rent.",
+            summary="Market data is unavailable for price comparison.",
             risk_level="unknown",
-            findings=[
-                f"Input rent: SGD {rent:,.0f}.",
-                f"Address: {address}.",
-                eval_result.get("message", ""),
-            ],
+            score=50.0,
+            findings=["Rental listings CSV is missing or empty — cannot benchmark."],
             recommendations=[
-                "Add more listings to data/listings.csv or broaden the search area.",
+                f"Manually check recent listings for {request.address or 'Singapore'} on PropertyGuru or 99.co."
             ],
-            data={
-                "rent": rent,
-                "address": address,
-                "bedrooms": bedrooms,
-                "evaluation": eval_result,
-            },
+            data={"rent": request.rent, "listings_available": False},
         )
 
-    # ---- 正常评估 ----
-    stats = eval_result["stats"]
-    score = float(eval_result["score"])
-    risk_level: Any = (
-        "low" if score >= 70 else "medium" if score >= 45 else "high"
-    )
+    # Filter
+    by_area = filter_by_area(all_listings, request.address)
+    by_bedrooms = filter_by_bedrooms(by_area, request.bedrooms)
 
-    findings = [
-        f"Input rent: SGD {rent:,.0f} per month.",
-        f"Area: {stats['area']} ({stats['sample_size']} comparable listings).",
-        f"Area median rent: SGD {stats['median']:,.0f}.",
-        f"Area rent range: SGD {stats['min']:,.0f} – SGD {stats['max']:,.0f}.",
-        (
-            f"Verdict: {eval_result['verdict']} "
-            f"({eval_result['diff_from_median_pct']:+.1f}% vs median)."
-        ),
-    ]
+    # Progressive relaxation
+    if len(by_bedrooms) < 3 and request.bedrooms is not None:
+        findings.append(
+            f"Only {len(by_bedrooms)} listing(s) match {request.bedrooms}-bedroom in the area. "
+            "Expanding to all bedroom types in the same area."
+        )
+        by_bedrooms = by_area
 
-    recommendations = [eval_result["suggestion"]]
-    if stats["sample_size"] < 5:
+    if len(by_bedrooms) < 3:
+        findings.append(
+            f"Only {len(by_bedrooms)} listing(s) match the area '{request.address}'. "
+            "Expanding to all-Singapore data."
+        )
+        by_bedrooms = all_listings
+
+    # Stats
+    stats = compute_market_stats(by_bedrooms)
+    scoring = _price_score(request.rent, stats)
+
+    # Risk level from score
+    score = scoring["score"]
+    if score >= 70:
+        risk_level = "low"
+    elif score >= 45:
+        risk_level = "medium"
+    else:
+        risk_level = "high"
+
+    # Build output
+    findings.extend([
+        f"Comparable listings found: {stats['count']}",
+        f"Market median: SGD {stats['median']}/month",
+        f"Market range (p25–p75): SGD {stats['p25']} – SGD {stats['p75']}/month",
+        f"Your rent (SGD {request.rent:,.0f}) is at the {scoring['percentile']}th percentile — {scoring['position']}.",
+    ])
+
+    recommendations.append(scoring["advice"])
+    if scoring["position"] in ("above_market", "very_high"):
         recommendations.append(
-            f"Sample size is small ({stats['sample_size']} listings); "
-            "treat the benchmark cautiously."
+            "Consider using the market data above to negotiate a lower rent with the landlord."
         )
+
+    data.update({
+        "market_stats": {k: v for k, v in stats.items() if k != "rents"},
+        "scoring": scoring,
+        "filter_stages": {
+            "all": len(all_listings),
+            "by_area": len(by_area),
+            "final": len(by_bedrooms),
+        },
+    })
 
     return AgentOutput(
         agent_name="price_agent",
-        summary=(
-            f"Rent SGD {rent:,.0f} is {eval_result['diff_from_median_pct']:+.1f}% "
-            f"vs {stats['area']} median (verdict: {eval_result['verdict']})."
-        ),
+        summary=f"Rent is {scoring['position']} (score={score}/100, risk={risk_level}).",
         risk_level=risk_level,
-        score=round(score, 1),
+        score=score,
         findings=findings,
-        evidence=[
-            f"listings.csv ({stats['sample_size']} entries in {stats['area']})",
-        ],
+        evidence=[f"Source: {settings.listings_path}"],
         recommendations=recommendations,
-        data={
-            "rent": rent,
-            "address": address,
-            "bedrooms": bedrooms,
-            "evaluation": eval_result,
-        },
+        data=data,
     )
 
 
-# ===== LLM Agent 定义(Google ADK) =====
+# ---------------------------------------------------------------------------
+# ADK tool & agent
+# ---------------------------------------------------------------------------
 
-PRICE_AGENT_INSTRUCTION = """
-You assess whether a requested monthly rent is reasonable for the address and
-unit type provided. Use the tools to look up comparable listings, compute price
-statistics, and evaluate the rent against market data. Always cite the area
-and sample size in your findings.
-"""
+
+def lookup_market_rents(address: str, bedrooms: int | None = None) -> dict[str, Any]:
+    """Look up comparable rental listings for an area and bedroom count.
+
+    Args:
+        address: Area or street name to search (e.g. "Jurong West").
+        bedrooms: Number of bedrooms (2 = 2-Room, etc.).  Pass null to include all.
+
+    Returns:
+        Market statistics and a sample of comparable listings.
+    """
+    all_listings = load_listings()
+    by_area = filter_by_area(all_listings, address)
+    by_bedrooms = filter_by_bedrooms(by_area, bedrooms)
+
+    if len(by_bedrooms) < 3 and bedrooms is not None:
+        by_bedrooms = by_area
+    if len(by_bedrooms) < 3:
+        by_bedrooms = all_listings
+
+    stats = compute_market_stats(by_bedrooms)
+    return {
+        "count": stats["count"],
+        "median": stats["median"],
+        "p25": stats["p25"],
+        "p75": stats["p75"],
+        "min": stats["min"],
+        "max": stats["max"],
+        "mean": stats["mean"],
+        "sample_listings": [
+            {
+                "address": row["address"],
+                "room_type": row["room_type"],
+                "monthly_rent_sgd": row["monthly_rent_sgd"],
+                "area_sqm": row["area_sqm"],
+            }
+            for row in by_bedrooms[:5]
+        ],
+    }
 
 
 def create_price_agent(model: str = settings.specialist_model) -> LlmAgent:
@@ -344,12 +350,22 @@ def create_price_agent(model: str = settings.specialist_model) -> LlmAgent:
     return LlmAgent(
         name="price_agent",
         model=model,
-        instruction=PRICE_AGENT_INSTRUCTION + INTERNAL_JSON_OUTPUT_INSTRUCTION,
-        tools=[
-            FunctionTool(lookup_comparable_listings),
-            FunctionTool(compute_price_statistics),
-            FunctionTool(evaluate_rent_reasonableness),
-        ],
+        instruction=(
+            "Assess whether the requested rent is reasonable for the area and "
+            "bedroom count.  Use the `lookup_market_rents` tool to get comparable "
+            "listings.\n\n"
+            "**Workflow**\n"
+            "1. Call `lookup_market_rents` with the user's address and bedroom count.\n"
+            "2. Compare the user's rent against the market median, p25, and p75.\n"
+            "3. If the rent is above p75, flag it as potentially overpriced.\n"
+            "4. If the rent is below p25, flag it as suspiciously cheap.\n"
+            "5. Provide a score (0‑100) and actionable negotiation advice.\n\n"
+            "User address: {address?}\n"
+            "User rent: {rent?}\n"
+            "User bedrooms: {bedrooms?}\n"
+            + INTERNAL_JSON_OUTPUT_INSTRUCTION
+        ),
+        tools=[FunctionTool(lookup_market_rents)],
         output_key="price_output",
     )
 
@@ -359,9 +375,12 @@ price_agent = create_price_agent()
 
 __all__ = [
     "assess_price",
-    "compute_price_statistics",
+    "compute_market_stats",
     "create_price_agent",
-    "evaluate_rent_reasonableness",
-    "lookup_comparable_listings",
+    "filter_by_area",
+    "filter_by_bedrooms",
+    "load_listings",
+    "lookup_market_rents",
     "price_agent",
 ]
+
