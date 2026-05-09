@@ -14,7 +14,7 @@ import logging
 from pathlib import Path
 from typing import Any
 
-from agents import AgentInput, AgentOutput, INTERNAL_JSON_OUTPUT_INSTRUCTION
+from agents import AgentInput, AgentOutput, INTERNAL_JSON_OUTPUT_INSTRUCTION, afc_limiter
 from agents.contract_clauses import extract_clauses
 from agents.contract_compare import compare_to_cea_standard
 from agents.contract_risk import (
@@ -323,6 +323,7 @@ def create_contract_agent(model: str = settings.specialist_model) -> LlmAgent:
         model=model,
         instruction=CONTRACT_AGENT_INSTRUCTION + "\n" + INTERNAL_JSON_OUTPUT_INSTRUCTION,
         tools=[FunctionTool(analyze_contract_text)],
+        generate_content_config=afc_limiter(2),
         output_key="contract_output",
     )
 

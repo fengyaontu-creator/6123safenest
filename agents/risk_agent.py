@@ -14,7 +14,7 @@ from datetime import date, datetime
 from pathlib import Path
 from typing import Any
 
-from agents import AgentInput, AgentOutput, INTERNAL_JSON_OUTPUT_INSTRUCTION
+from agents import AgentInput, AgentOutput, INTERNAL_JSON_OUTPUT_INSTRUCTION, afc_limiter
 from config import settings
 from google.adk.agents import LlmAgent
 from google.adk.tools import FunctionTool
@@ -382,6 +382,7 @@ def assess_risk(
                 if score == 100.0:
                     findings.append(f"CEA check for {identity}: verified, no issues found.")
                 else:
+                    findings.append(f"CEA check for {identity}: verified.")
                     # Verified but not perfect (e.g. CSV source, near expiry)
                     for reason in score_reasons:
                         if not reason.startswith("CEA registration confirmed"):
@@ -650,7 +651,119 @@ def generate_risk_tips(
     return tips
 
 
-RISK_AGENT_INSTRUCTION = """\
+def _extract_agent_reg_no_from_text(text: str) -> str | None:
+    match = re.search(r"R\d{5,6}[A-Z]|P\d{5,6}[A-Z]", text or "", re.IGNORECASE)
+    return match.group(0).upper() if match else None
+
+
+def _extract_company_name_from_text(text: str) -> str:
+    if not text:
+        return ""
+    patterns = [
+        r"(?:Estate\s+Agent|Agency|Company)\s*[:\-]\s*([^\n]{3,80})",
+        r"(?:represented\s+by)\s+([A-Za-z0-9 &.,'-]{3,80})",
+    ]
+    for pattern in patterns:
+        match = re.search(pattern, text, re.IGNORECASE)
+        if match:
+            return match.group(1).strip(" ,.;")
+    return ""
+
+
+def run_risk_assessment(
+    address: str = "",
+    agent_name: str = "",
+    agent_reg_no: str = "",
+    contract_text: str = "",
+) -> dict[str, Any]:
+    """Run CEA verification, scoring, and risk tips in one ADK tool call."""
+
+    query_type = ""
+    query_value = ""
+    source_mode = "unknown"
+
+    if agent_reg_no:
+        query_type = "reg_no"
+        query_value = agent_reg_no
+        source_mode = "direct"
+    elif agent_name:
+        query_type = "name"
+        query_value = agent_name
+        source_mode = "direct"
+    elif contract_text:
+        extracted_reg_no = _extract_agent_reg_no_from_text(contract_text)
+        extracted_name = _extract_agent_name_from_text(contract_text)
+        if extracted_reg_no:
+            query_type = "reg_no"
+            query_value = extracted_reg_no
+            source_mode = "contract"
+        elif extracted_name:
+            query_type = "name"
+            query_value = extracted_name
+            source_mode = "contract"
+
+    if not query_type or not query_value:
+        return {
+            "status": "partial_result",
+            "risk_level": "unknown",
+            "score": None,
+            "identity": "",
+            "source_mode": source_mode,
+            "findings": ["No agent name or CEA registration number found."],
+            "recommendations": [
+                "Ask for the agent's full name and CEA registration number, then verify it before paying."
+            ],
+            "evidence": [],
+        }
+
+    verification = verify_cea_agent(query_type, query_value)
+    status = verification.get("status") or (
+        "verified" if verification.get("found") else "risk"
+    )
+    source = verification.get("source", "unknown")
+    record = (verification.get("records") or [{}])[0]
+    score_result = compute_risk_score(
+        status,
+        source,
+        str(record.get("registration_end_date", "")),
+    )
+    contract_company_name = _extract_company_name_from_text(contract_text)
+    recommendations = generate_risk_tips(
+        status,
+        source,
+        str(record.get("registration_end_date", "")),
+        str(record.get("estate_agent_name", "")),
+        str(record.get("estate_agent_license_no", "")),
+        contract_company_name,
+        address,
+    )
+
+    return {
+        "status": "ok",
+        "identity": query_value,
+        "query_type": query_type,
+        "source_mode": source_mode,
+        "verification": verification,
+        "score": score_result["score"],
+        "risk_level": score_result["risk_level"],
+        "registration_status": score_result["registration_status"],
+        "status_label": score_result["status_label"],
+        "findings": score_result["reasons"],
+        "recommendations": recommendations,
+        "evidence": [
+            (
+                f"CEA registry lookup via {source}: "
+                f"{record.get('registration_no', 'N/A')}, "
+                f"valid until {record.get('registration_end_date', 'N/A')}"
+            )
+            if record
+            else f"CEA registry lookup via {source}: no records found."
+        ],
+        "contract_company_name": contract_company_name,
+    }
+
+
+_RISK_AGENT_LEGACY_INSTRUCTION = """\
 You screen Singapore rental leads for scam and compliance risks.
 
 Workflow (follow this order exactly):
@@ -702,16 +815,48 @@ Output a concise JSON AgentOutput. The ``risk_level`` must be one of:
 """
 
 
+RISK_AGENT_INSTRUCTION = """\
+You screen Singapore rental leads for scam and compliance risks.
+
+Call the run_risk_assessment tool once with the available address, agent name,
+agent CEA registration number, and contract text from session state. The tool
+performs identity extraction, CEA verification, risk scoring, and recommendation
+generation in one call. Use the tool result directly.
+Do NOT invent your own score, risk_level, or recommendations.
+After the tool returns, produce one JSON AgentOutput and stop.
+Do not call any tool a second time.
+
+In the final JSON AgentOutput:
+- If the user directly provided an agent name or reg no (agent_name /
+  agent_reg_no is set): keep the report concise.
+- If the agent was found by searching contract_text: keep the report detailed.
+- Use the tool result's score, risk_level, findings, evidence, and
+  recommendations directly.
+
+Available data from session state:
+  Rental address: {address?}
+  Monthly rent (SGD): {rent?}
+  Number of bedrooms: {bedrooms?}
+  Agent name (if provided by user): {agent_name?}
+  Agent CEA reg no (if provided by user): {agent_reg_no?}
+  Contract file name: {contract_file_name?}
+  Extracted contract text: {contract_text?}
+
+If no agent identity can be found, output risk_level "unknown", score null, and
+general scam-screening recommendations based on the run_risk_assessment result.
+
+Output a concise JSON AgentOutput. The risk_level must be one of:
+"low", "medium", "high", or "unknown". The score must be a float 0-100 or null.
+"""
+
+
 def create_risk_agent(model: str = settings.specialist_model) -> LlmAgent:
     return LlmAgent(
         name="risk_agent",
         model=model,
         instruction=RISK_AGENT_INSTRUCTION + "\n" + INTERNAL_JSON_OUTPUT_INSTRUCTION,
-        tools=[
-            FunctionTool(verify_cea_agent),
-            FunctionTool(compute_risk_score),
-            FunctionTool(generate_risk_tips),
-        ],
+        tools=[FunctionTool(run_risk_assessment)],
+        generate_content_config=afc_limiter(2),
         output_key="risk_output",
     )
 
@@ -724,6 +869,6 @@ __all__ = [
     "create_risk_agent",
     "lookup_cea_local",
     "risk_agent",
+    "run_risk_assessment",
     "verify_cea_agent",
 ]
-

@@ -7,7 +7,7 @@ import math
 from pathlib import Path
 from typing import Any
 
-from agents import AgentInput, AgentOutput, INTERNAL_JSON_OUTPUT_INSTRUCTION
+from agents import AgentInput, AgentOutput, INTERNAL_JSON_OUTPUT_INSTRUCTION, afc_limiter
 from config import settings
 from google.adk.agents import LlmAgent
 from google.adk.tools import FunctionTool
@@ -195,6 +195,17 @@ def surrounding_amenities(address: str) -> dict[str, Any]:
     }
 
 
+def run_location_assessment(address: str) -> dict[str, Any]:
+    """Run all location checks in one tool call for the ADK LlmAgent."""
+
+    return {
+        "nearest_mrt": nearest_mrt(address),
+        "commute_to_cbd": commute_estimate(address, "CBD"),
+        "commute_to_ntu": commute_estimate(address, "NTU"),
+        "surrounding_amenities": surrounding_amenities(address),
+    }
+
+
 def _commute_score(cbd_minutes: int, ntu_minutes: int, walk_minutes: int) -> float:
     cbd_penalty = max(cbd_minutes - 35, 0) * 1.2
     ntu_penalty = max(ntu_minutes - 20, 0)
@@ -282,9 +293,15 @@ def assess_location(input_data: AgentInput | dict[str, Any]) -> AgentOutput:
 
 
 LOCATION_AGENT_INSTRUCTION = """
-You assess Singapore rental locations. Use the tools to estimate nearest MRT,
-commute time to CBD/NTU, mock surrounding amenities, and practical location risks.
-""" 
+You assess Singapore rental locations.
+
+Call the run_location_assessment tool exactly once with the provided address.
+After the tool returns, immediately produce one JSON AgentOutput and stop.
+Do not call any tool a second time.
+Do not call nearest_mrt, commute_estimate, or surrounding_amenities directly.
+If the tool result is incomplete, mark the missing field as "not_available" or
+"needs_user_confirmation" in data and stop.
+"""
 
 
 def create_location_agent(model: str = settings.specialist_model) -> LlmAgent:
@@ -292,11 +309,8 @@ def create_location_agent(model: str = settings.specialist_model) -> LlmAgent:
         name="location_agent",
         model=model,
         instruction=LOCATION_AGENT_INSTRUCTION + INTERNAL_JSON_OUTPUT_INSTRUCTION,
-        tools=[
-            FunctionTool(nearest_mrt),
-            FunctionTool(commute_estimate),
-            FunctionTool(surrounding_amenities),
-        ],
+        tools=[FunctionTool(run_location_assessment)],
+        generate_content_config=afc_limiter(2),
         output_key="location_output",
     )
 
@@ -310,5 +324,6 @@ __all__ = [
     "create_location_agent",
     "location_agent",
     "nearest_mrt",
+    "run_location_assessment",
     "surrounding_amenities",
 ]
