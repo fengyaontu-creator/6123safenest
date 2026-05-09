@@ -4,7 +4,7 @@ version = "0.1.0"
 description = "SafeNest — Singapore rental agentic assistant (CA6123)"
 authors = ["SafeNest Team"]
 readme = "README.md"
-package-mode = false
+packages = [{ include = "safenest_cli" }]
 
 [tool.poetry.dependencies]
 python = "^3.11"
@@ -25,6 +25,9 @@ opentelemetry-sdk = "*"
 pytest = "*"
 pytest-cov = "*"
 ruff = "*"
+
+[tool.poetry.scripts]
+safenest-web = "safenest_cli.web_entry:main"
 
 [build-system]
 requires = ["poetry-core"]

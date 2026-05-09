@@ -11,7 +11,7 @@ import statistics
 from pathlib import Path
 from typing import Any
 
-from agents import AgentInput, AgentOutput, INTERNAL_JSON_OUTPUT_INSTRUCTION
+from agents import AgentInput, AgentOutput, INTERNAL_JSON_OUTPUT_INSTRUCTION, afc_limiter
 from config import settings
 from google.adk.agents import LlmAgent
 from google.adk.tools import FunctionTool
@@ -230,6 +230,25 @@ def evaluate_rent_reasonableness(
 
 # ===== 主入口:确定性评估(测试 / CLI 用这个) =====
 
+def run_price_assessment(
+    rent: float,
+    address: str,
+    bedrooms: int | None = None,
+) -> dict[str, Any]:
+    """Run all price checks in one ADK tool call."""
+
+    room_type = _bedrooms_to_room_type(bedrooms)
+    return {
+        "rent": rent,
+        "address": address,
+        "bedrooms": bedrooms,
+        "room_type": room_type,
+        "comparables": lookup_comparable_listings(address, room_type),
+        "statistics": compute_price_statistics(address, room_type),
+        "evaluation": evaluate_rent_reasonableness(rent, address, room_type),
+    }
+
+
 def assess_price(input_data: AgentInput | dict[str, Any]) -> AgentOutput:
     """运行确定性的租金合理性评估。
 
@@ -333,9 +352,14 @@ def assess_price(input_data: AgentInput | dict[str, Any]) -> AgentOutput:
 
 PRICE_AGENT_INSTRUCTION = """
 You assess whether a requested monthly rent is reasonable for the address and
-unit type provided. Use the tools to look up comparable listings, compute price
-statistics, and evaluate the rent against market data. Always cite the area
-and sample size in your findings.
+unit type provided.
+
+Call the run_price_assessment tool once with rent, address, and bedrooms from
+session state. The tool performs comparable lookup, price statistics, and rent
+reasonableness evaluation in one call.
+After the tool returns, produce one JSON AgentOutput and stop.
+Do not call any tool a second time.
+Always cite the area and sample size in your findings when available.
 """
 
 
@@ -345,11 +369,8 @@ def create_price_agent(model: str = settings.specialist_model) -> LlmAgent:
         name="price_agent",
         model=model,
         instruction=PRICE_AGENT_INSTRUCTION + INTERNAL_JSON_OUTPUT_INSTRUCTION,
-        tools=[
-            FunctionTool(lookup_comparable_listings),
-            FunctionTool(compute_price_statistics),
-            FunctionTool(evaluate_rent_reasonableness),
-        ],
+        tools=[FunctionTool(run_price_assessment)],
+        generate_content_config=afc_limiter(2),
         output_key="price_output",
     )
 
@@ -364,4 +385,5 @@ __all__ = [
     "evaluate_rent_reasonableness",
     "lookup_comparable_listings",
     "price_agent",
+    "run_price_assessment",
 ]
