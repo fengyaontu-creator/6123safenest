@@ -1,11 +1,11 @@
 # SafeNest Architecture
 
 > CA6123 · Agentic AI and Applications
-> 设计决策记录 + 架构说明
+> Architecture overview + design decision log
 
 ---
 
-## 架构总览
+## High-level architecture
 
 ```mermaid
 graph TB
@@ -64,112 +64,129 @@ graph TB
     style REPORT fill:#1a2e1a,stroke:#34d399,color:#a7f3d0
 ```
 
-**执行顺序**：
+**Execution order**:
 
-1. **Guardrail-In** → 输入净化：Prompt Injection 过滤 + PII 脱敏
-2. **Intake Router Agent** → 串行第一步：Gemini 语义提取 6 个字段（address / rent / contract_path / bedrooms / agent_name / agent_reg_no），字段缺失则反问用户补齐
-3. **ParallelAgent** → 4 个 Specialist Agent 同时启动
-4. **Synthesizer** → 串行最后一步：读取 4 个 output_key，生成 Markdown 报告
-5. **Guardrail-Out** → 输出净化：越权话题拒绝（法律建议 / 签证咨询等）
+1. **Guardrail-In** — input sanitisation: prompt injection filtering + PII redaction.
+2. **Intake Router Agent** — first sequential step: Gemini-driven semantic extraction of six fields (`address` / `rent` / `contract_path` / `bedrooms` / `agent_name` / `agent_reg_no`); when required fields are missing, the agent asks the user clarifying questions instead of proceeding blindly.
+3. **ParallelAgent** — the four specialist agents run concurrently.
+4. **Synthesizer** — final sequential step: reads the four output keys from session state and produces a Markdown report.
+5. **Scope Guard** — refuses out-of-scope queries (legal advice, immigration consulting, etc.). Despite the legacy "Guardrail-Out" label in the diagram, the scope check is wired at *input* time in the intake router so that violating queries cost zero LLM tokens.
 
-**每个 Agent 都有双路径**：
-- **确定性路径**：`assess_*()` 函数，Python 规则逻辑，零 LLM 调用，用于 CLI / 测试 / 离线场景
-- **ADK 路径**：`create_*_agent()` LlmAgent，LLM + 工具函数，用于 Web 交互
+### Mapping to the agentic four-stage cycle
 
-| Agent | 暴露给 LLM 的工具 | 数据源 | 评分逻辑 |
+The above topology maps cleanly to the **Perceive → Reason → Action → Learn** cycle described in the assignment brief:
+
+| Stage | Where in SafeNest |
+|---|---|
+| **Perceive** | `Guardrail-In` (`injection_filter`, `pii_detector`) sanitises every incoming query before any LLM sees it; `Intake Router Agent` then performs Gemini-driven semantic extraction of the structured rental fields out of free-form natural language. |
+| **Reason** | The orchestrator uses `SequentialAgent → ParallelAgent → Synthesizer` to break the goal "evaluate this rental" into routable sub-tasks. The intake router additionally classifies intent (direct landlord vs agent-driven, rent-given vs rent-undecided, small-talk vs analysis) and routes accordingly. The Synthesizer performs cross-agent reasoning — surfacing contradictions like "low price + unregistered agent ⇒ likely scam" that no single agent would catch. |
+| **Action** | All four specialists operate via `FunctionTool`-wrapped tool calls: Location uses Haversine distance over `mrt_stations.json`; Contract performs **Agentic RAG** retrieval over the Chroma vector store of CEA standard templates (bonus); Price queries `listings.csv`; Risk calls the live `data.gov.sg` CEA API with local CSV fallback. |
+| **Learn** | Every LLM call is grounded by structured **in-context learning**: `INTERNAL_JSON_OUTPUT_INSTRUCTION` (in [agents/\_\_init\_\_.py](../agents/__init__.py)) gives the model the exact `AgentOutput` shape it must produce; per-agent instructions describe the workflow and the tool's expected single-call usage; Pydantic validation rejects malformed outputs at the boundary. The 175 automated tests in [tests/](../tests/) form the offline evaluation harness for this layer (Appendix B bonus: Agent Evaluation). |
+
+**Every specialist agent has two execution paths**:
+
+- **Deterministic path**: `assess_*()` Python functions, rule-based, zero LLM calls; used by CLI, tests, and offline scenarios.
+- **ADK / LLM path**: `create_*_agent()` `LlmAgent`, LLM + tool functions; used by the ADK web UI for natural-language interaction.
+
+| Agent | Tool exposed to the LLM | Data source | Scoring logic |
 |------|---------|--------|---------|
-| Location | `run_location_assessment`(内部并 `nearest_mrt` + `commute_estimate` × 2 + `surrounding_amenities`) | `mrt_stations.json`（10 站） | 通勤分(60%) + 周边分(40%)，0-100 |
-| Contract | `analyze_contract_text`(内部:`extract_clauses` + `compare_to_cea_standard` + `compute_contract_risk`) | Chroma（4 份 CEA 标准 PDF） | 4 条款关键词重叠度 → 偏差分(0-100) |
-| Price | `run_price_assessment`(内部:`lookup_comparable_listings` + `compute_price_statistics` + `evaluate_rent_reasonableness`) | `listings.csv`（20 条） | 租金在市场中的百分位 → 分数映射 |
-| Risk | `run_risk_assessment`(内部:`verify_cea_agent` + `compute_risk_score` + `generate_risk_tips`) | data.gov.sg API + `cea_agents.csv`（**37715 条**真实 CEA 注册名单） | 注册(60) + 有效期(25) + 数据源(15) = 100 |
+| Location | `run_location_assessment` (internally calls `nearest_mrt` + `commute_estimate` × 2 + `surrounding_amenities`) | `mrt_stations.json` (10 stations) | Commute (60%) + surroundings (40%), 0–100 |
+| Contract | `analyze_contract_text` (internally calls `extract_clauses` + `compare_to_cea_standard` + `compute_contract_risk`) | Chroma (4 CEA template PDFs) | Per-clause keyword-overlap deviation → 0–100 risk score |
+| Price | `run_price_assessment` (internally calls `lookup_comparable_listings` + `compute_price_statistics` + `evaluate_rent_reasonableness`) | `listings.csv` (20 entries) | Tenant rent's percentile against the area distribution → score |
+| Risk | `run_risk_assessment` (internally calls `verify_cea_agent` + `compute_risk_score` + `generate_risk_tips`) | `data.gov.sg` API + `cea_agents.csv` (**37,715** real CEA salesperson records) | Registration (60) + validity (25) + data-source reliability (15) = 100 |
 
-> **工具粒度说明**：每个 sub-agent 只暴露 **1 个聚合工具** 给 LLM,内部按确定顺序调用多个原子函数。这种设计是为了避免 LLM 在多个工具之间反复决策导致 AFC 调用循环 —— 详见 [agents/__init__.py:`afc_limiter`](../agents/__init__.py)。
-
----
-
-## 设计决策记录
-
-### 决策 1：为什么用 ADK SequentialAgent + ParallelAgent
-
-| 维度 | 内容 |
-|------|------|
-| **问题** | 4 个分析任务（通勤/合同/价格/风险）如何编排？ |
-| **选项** | A) 全串行 B) 全并行 C) Sequential(Intake → Parallel(4 agents) → Synthesizer) |
-| **选择** | C — 混合编排 |
-| **理由** | Intake 必须先提取结构化字段才能开始分析；4 个分析任务互不依赖，并行可以节省延迟；Synthesizer 必须等 4 个分析全部完成才能汇总。ADK 的 `SequentialAgent` + `ParallelAgent` 原生支持这个拓扑，无需手动管理 asyncio。 |
-
-### 决策 2：为什么每个 Agent 都有确定性 + LLM 双路径
-
-| 维度 | 内容 |
-|------|------|
-| **问题** | Agent 的推理逻辑应该走 LLM 还是硬编码？ |
-| **选项** | A) 纯 LLM（灵活但贵） B) 纯规则（便宜但不灵活） C) 双路径 |
-| **选择** | C — 每个 Agent 提供 `assess_*()` 确定性函数（CLI / 测试 / 离线用）+ `create_*_agent()` LlmAgent（ADK web 用） |
-| **理由** | 测试需要确定性结果；离线模式下不需要 API key；ADK web 模式下 LLM 可以处理自然语言输入。两种模式共享同一套工具函数。 |
-
-### 决策 3：为什么 Contract Agent 用关键词重叠度
-
-| 维度 | 内容 |
-|------|------|
-| **问题** | 合同条款对比：用 LLM 还是算法？ |
-| **选项** | A) LLM 逐条对比 B) 关键词重叠度 C) 两者结合 |
-| **选择** | C — 关键词重叠度为主，LLM 为辅（ADK 模式） |
-| **理由** | 关键词重叠度（`_keyword_overlap_score`）无需 API 调用、零 token 消耗、100% 可复现。LLM 在 ADK 模式下通过 `search_cea_clause` 工具补充定性判断。 |
-
-### 决策 4：为什么 Risk Agent 用双层验证
-
-| 维度 | 内容 |
-|------|------|
-| **问题** | CEA 代理查询：依赖外部 API 还是本地数据？ |
-| **选项** | A) 纯 API B) 纯本地 CSV C) API → CSV 回退 |
-| **选择** | C — 双层回退 |
-| **理由** | data.gov.sg API 免费但偶尔超时 / 503。本地 `cea_agents.csv`（30 条真实代理数据）作为离线兜底，保证即使在无网络环境下也能给出验证结论。API 成功时标记 `source="api"` 获得最高数据源评分。 |
-
-### 决策 5：为什么 Guardrail 分 In / Out 两层
-
-| 维度 | 内容 |
-|------|------|
-| **问题** | 安全护栏应该放在 Agent 管道的哪个位置？ |
-| **选项** | A) 只在输入 B) 只在输出 C) In + Out 分层 |
-| **选择** | C — 分层 |
-| **理由** | Guardrail-In（`injection_filter` + `pii_detector`）拦截恶意输入、脱敏隐私，防止 LLM 被操纵。Guardrail-Out（`scope_guard`）在输出阶段拒绝越权请求（法律建议、签证咨询等）。两层独立，可各自开关。 |
-
-### 决策 6：Token 优化策略
-
-| 维度 | 内容 |
-|------|------|
-| **问题** | 合同全文 (4368 chars) 被 Contract 和 Risk 两个 Agent 重复注入 LLM，消耗大。 |
-| **选项** | A) 不做优化 B) Risk Agent 截断 C) 精简所有 Agent |
-| **选择** | B — Risk Agent 截断 + Contract Agent ref_text 截断 |
-| **理由** | Risk Agent 只需要合同头部 800 字符来找代理名，不需要全文。Contract Agent 输出的 `clause_results` 中每条 ref_text 从 300 截到 150 字符（Synthesizer 只看摘要）。两项合计节省 ~24% token，不影响功能。 |
-
-### 决策 7：Python 3.13 + OTel 兼容方案
-
-| 维度 | 内容 |
-|------|------|
-| **问题** | Python 3.13 的 `asyncio.TaskGroup` 与 OpenTelemetry SDK 1.41 的 contextvars 存在已知不兼容，每次跨 Agent 的 span detach 抛出 `ValueError: created in a different Context`，触发 ADK tenacity 重试风暴，单次运行消耗 2.6M tokens。 |
-| **选项** | A) 禁用 OTel SDK B) monkey-patch C) `OTEL_TRACES_EXPORTER=none` |
-| **选择** | C — 环境变量禁用 trace 导出 |
-| **理由** | 设置 `OTEL_TRACES_EXPORTER=none` 后，OTel span 采集仍正常进行但不会触发导出端的 detach 错误。不影响队友其他项目的 OTel 使用。 |
+> **Tool-granularity note**: each sub-agent exposes **a single aggregate tool** to the LLM; internally that tool calls multiple atomic functions in a fixed order. This deliberately avoids letting the LLM oscillate between several small tools, which we observed empirically as one trigger of runaway tool-call loops.
 
 ---
 
-## 数据流详解
+## Design decision log
+
+### Decision 1 — Why ADK SequentialAgent + ParallelAgent
+
+| Dimension | Content |
+|------|------|
+| **Question** | How should the four analysis tasks (commute / contract / price / risk) be orchestrated? |
+| **Options** | A) all sequential; B) all parallel; C) `Sequential(Intake → Parallel(4 agents) → Synthesizer)` |
+| **Choice** | **C** — hybrid orchestration. |
+| **Rationale** | Intake must extract structured fields before any analysis can begin; the four analyses are independent and can run in parallel to cut latency; the Synthesizer must wait for all four to finish before merging. ADK's `SequentialAgent` + `ParallelAgent` express this topology natively, so we never manage `asyncio` by hand. |
+
+### Decision 2 — Why every agent has a deterministic + LLM dual path
+
+| Dimension | Content |
+|------|------|
+| **Question** | Should each agent's reasoning live in the LLM or in code? |
+| **Options** | A) pure LLM (flexible but expensive); B) pure rules (cheap but rigid); C) dual path |
+| **Choice** | **C** — every agent ships an `assess_*()` deterministic function (used by CLI / tests / offline) AND a `create_*_agent()` LlmAgent (used by ADK web). |
+| **Rationale** | Tests need deterministic results; offline mode must work without an API key; ADK web mode benefits from LLM-driven natural-language input. Both paths share the same underlying tool functions, so behaviour stays consistent across modes. |
+
+### Decision 3 — Why the Contract Agent uses keyword-overlap scoring
+
+| Dimension | Content |
+|------|------|
+| **Question** | Contract clause comparison: LLM-based or algorithmic? |
+| **Options** | A) LLM compares each clause; B) keyword-overlap deviation; C) hybrid |
+| **Choice** | **C** — keyword overlap as the primary signal, LLM as a secondary qualitative judge in ADK mode. |
+| **Rationale** | Keyword-overlap scoring (`_keyword_overlap_score`) needs no API call, costs zero tokens, and is 100% reproducible. The LLM in ADK mode adds qualitative judgement via the `analyze_contract_text` tool — best of both worlds. |
+
+### Decision 4 — Why the Risk Agent uses two-tier verification
+
+| Dimension | Content |
+|------|------|
+| **Question** | CEA salesperson lookup: external API or local data? |
+| **Options** | A) API only; B) local CSV only; C) API → CSV fallback |
+| **Choice** | **C** — two-tier with fallback. |
+| **Rationale** | The `data.gov.sg` API is free but occasionally times out or returns 503. The local `cea_agents.csv` (**37,715** real salesperson records) provides offline robustness — a verification verdict is always available even with no internet. When the API succeeds we tag `source="api"`, which earns the highest data-source-reliability score. |
+
+### Decision 5 — Why guardrails are layered
+
+| Dimension | Content |
+|------|------|
+| **Question** | Where in the agent pipeline should safety guardrails sit? |
+| **Options** | A) input only; B) output only; C) both layered |
+| **Choice** | **C** — layered. |
+| **Rationale** | Guardrail-In (`injection_filter` + `pii_detector`) blocks malicious input and redacts PII before it reaches any LLM. Scope Guard refuses out-of-scope requests (legal advice, immigration, medical, etc.). All three layers are wired at the intake router so violating queries cost zero LLM tokens. The two layers are independent and can be toggled separately. |
+
+### Decision 6 — Token-cost optimisation
+
+| Dimension | Content |
+|------|------|
+| **Question** | The full contract text (~4,368 chars) was being injected into both Contract Agent and Risk Agent prompts, causing duplicate token cost. |
+| **Options** | A) no optimisation; B) truncate inside Risk Agent only; C) trim across all agents |
+| **Choice** | **B** — truncate Risk Agent's contract input + trim Contract Agent's `ref_text` |
+| **Rationale** | Risk Agent only needs the first ~800 characters of the contract to find the agent name; it does not need the full text. Contract Agent's `clause_results` `ref_text` was trimmed from 300 → 150 characters since the Synthesizer only consumes summaries. Net token savings ~24% with no functional loss. |
+
+### Decision 7 — Python 3.13 + OpenTelemetry compatibility
+
+| Dimension | Content |
+|------|------|
+| **Question** | Python 3.13's `asyncio.TaskGroup` and OpenTelemetry SDK 1.41's `contextvars` have a known incompatibility. Each cross-agent span detach raises `ValueError: created in a different Context`, which trips ADK's `tenacity` retry storm and burns ~2.6 M tokens per run. |
+| **Options** | A) disable the OTel SDK; B) monkey-patch the SDK; C) `OTEL_TRACES_EXPORTER=none` |
+| **Choice** | **C** — disable trace exporting via environment variable. |
+| **Rationale** | With `OTEL_TRACES_EXPORTER=none`, OTel still collects spans but no longer triggers detach errors at the exporter boundary. Other projects on the same machine that rely on OTel are unaffected. |
+
+---
+
+## Data flow
 
 ```
-用户输入
+User input
   │
-  ├─ [Guardrail-In] injection_filter.detect_injection()
-  │     ├─ flagged=True → 返回 INJECTION_BLOCK_MESSAGE，流程终止
-  │     └─ flagged=False → 继续
+  ├─ [Guardrail-In] check_injection(user_text)
+  │     ├─ blocked=True → return INJECTION_BLOCK_MESSAGE, end run
+  │     └─ blocked=False → continue
   │
-  ├─ [Guardrail-In] pii_detector.redact_pii()
-  │     └─ NRIC / 手机号 等 → 替换为 <PERSON> / <PHONE_NUMBER>
+  ├─ [Guardrail-In] check_scope(user_text)
+  │     ├─ refused=True → return SCOPE_REFUSAL_TEMPLATE, end run
+  │     └─ refused=False → continue
+  │
+  ├─ [Guardrail-In] redact_pii(user_text)
+  │     └─ NRIC / phone / email → replaced with <ENTITY_TYPE>; redacted copy stored in session.state for audit
   │
   ▼
 Intake Router Agent
-  │  提取: address, rent, contract_path, bedrooms, agent_name, agent_reg_no
-  │  存入: session state
+  │  Extracts: address, rent, contract_path, bedrooms, agent_name, agent_reg_no
+  │  Stores them in session.state
+  │  (If required fields are missing, asks the user a follow-up question and ends this turn)
   │
   ▼
 ParallelAgent ──┬── Location Agent  ──→ location_output
@@ -179,11 +196,7 @@ ParallelAgent ──┬── Location Agent  ──→ location_output
   │
   ▼
 Synthesizer
-  │  读取 4 个 output_key → 生成 Markdown 报告 → 写入 final_report
-  │
-  ├─ [Guardrail-Out] scope_guard.check_scope()
-  │     ├─ in_scope=False → 替换为 SCOPE_REFUSAL_TEMPLATE
-  │     └─ in_scope=True → 原文输出
+  │  Reads four output keys from session.state → produces Markdown report → writes to final_report
   │
   ▼
 Final Report
@@ -191,13 +204,13 @@ Final Report
 
 ---
 
-## 技术栈
+## Tech stack
 
-| 组件 | 选择 | 备注 |
+| Component | Choice | Notes |
 |------|------|------|
-| LLM | Gemini 2.5 Flash / Flash Lite | `config.py` 中 `specialist_model` / `synthesizer_model` |
-| Agent 框架 | Google ADK (Python) | SequentialAgent + ParallelAgent + LlmAgent |
-| 向量库 | Chroma | 本地 ONNX embedding，无外部 API 依赖 |
-| PDF 解析 | pypdf + pdfplumber | 双层策略：pypdf 快读，pdfplumber 回退 |
-| PII 检测 | regex-based(Presidio-aware) | Guardrail-In;regex 检测 NRIC / EMAIL / SG_PHONE / PERSON,Presidio import 失败时降级返回空。详见 [docs/guardrail_report.md](guardrail_report.md) |
-| 观测 | ADK 内置 trace | OTel exporter 已禁用（Python 3.13 兼容） |
+| LLM | Gemini 2.5 Flash / Flash Lite | `specialist_model` / `synthesizer_model` in [config.py](../config.py) |
+| Agent framework | Google ADK (Python) | `SequentialAgent` + `ParallelAgent` + `LlmAgent` |
+| Vector store | Chroma | Local ONNX embeddings, no external API dependency |
+| PDF parsing | pypdf + pdfplumber | Two-tier: pypdf is fast, pdfplumber is the layout-aware fallback |
+| PII detection | Regex-based, Presidio-aware | Guardrail-In; regex catches NRIC / EMAIL / SG_PHONE / PERSON. When `presidio_analyzer` import fails, returns `[]` gracefully. See [docs/guardrail_report.md](guardrail_report.md). |
+| Observability | ADK built-in trace | OTel exporter intentionally disabled (Python 3.13 compatibility, Decision 7) |
