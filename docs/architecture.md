@@ -72,6 +72,17 @@ graph TB
 4. **Synthesizer** → 串行最后一步：读取 4 个 output_key，生成 Markdown 报告
 5. **Guardrail-Out** → 输出净化：越权话题拒绝（法律建议 / 签证咨询等）
 
+### Mapping to the agentic four-stage cycle
+
+The above topology maps cleanly to the **Perceive → Reason → Action → Learn** cycle described in the assignment brief:
+
+| Stage | Where in SafeNest |
+|---|---|
+| **Perceive** | `Guardrail-In` (`injection_filter`, `pii_detector`) sanitises every incoming query before any LLM sees it; `Intake Router Agent` then performs Gemini-driven semantic extraction of the structured rental fields out of free-form natural language. |
+| **Reason** | The orchestrator uses `SequentialAgent → ParallelAgent → Synthesizer` to break the goal "evaluate this rental" into routable sub-tasks. The intake router additionally classifies intent (direct landlord vs agent-driven, rent-given vs rent-undecided, small-talk vs analysis) and routes accordingly. The Synthesizer performs cross-agent reasoning — surfacing contradictions like "low price + unregistered agent ⇒ likely scam" that no single agent would catch. |
+| **Action** | All four specialists operate via `FunctionTool`-wrapped tool calls: Location uses Haversine distance over `mrt_stations.json`; Contract performs **Agentic RAG** retrieval over the Chroma vector store of CEA standard templates (bonus); Price queries `listings.csv`; Risk calls the live `data.gov.sg` CEA API with local CSV fallback. |
+| **Learn** | Every LLM call is grounded by structured **in-context learning**: `INTERNAL_JSON_OUTPUT_INSTRUCTION` (in [agents/\_\_init\_\_.py](../agents/__init__.py)) gives the model the exact `AgentOutput` shape it must produce; per-agent instructions describe the workflow and the tool's expected single-call usage; Pydantic validation rejects malformed outputs at the boundary. The 175 automated tests in [tests/](../tests/) form the offline evaluation harness for this layer (Appendix B bonus: Agent Evaluation). |
+
 **每个 Agent 都有双路径**：
 - **确定性路径**：`assess_*()` 函数，Python 规则逻辑，零 LLM 调用，用于 CLI / 测试 / 离线场景
 - **ADK 路径**：`create_*_agent()` LlmAgent，LLM + 工具函数，用于 Web 交互

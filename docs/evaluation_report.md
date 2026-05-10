@@ -1,6 +1,8 @@
 # Agent Evaluation Report
 
 > SafeNest 测试覆盖与评估
+>
+> **This document is the evidence for the Appendix-B bonus feature "Agent Evaluation" — a deterministic, reproducible test harness that validates every specialist and the cross-cutting guardrails without requiring a Gemini API key.**
 
 ---
 
@@ -8,11 +10,12 @@
 
 | 维度 | 数值 |
 |------|------|
-| 总测试数 | **143** |
-| 通过 | 143 |
+| 总测试数 | **175** |
+| 通过 | 175 |
 | 失败 | 0 |
 | 测试框架 | pytest |
 | 执行时间 | ~45s |
+| **API key required** | ❌ none — the deterministic path is fully exercised |
 
 > 复现命令:`poetry run pytest`(完整跑全部 test 文件)
 
@@ -25,7 +28,9 @@
 | Risk Agent | `test_risk.py` | 27 | 本地 CSV 查询 / API+CSV 双层验证 / 风险评分 / 风险提示 / 代理名正则提取 / AgentOutput schema |
 | Guardrails | `test_guardrails.py` | 22 | Injection(10) / PII(6) / Scope(6),含 Presidio 降级与 redact 替换 |
 | Contract Risk | `test_contract_risk.py` | 20 | 4 类条款(押金/终止/维修/水电)各 low/medium/high 触发 |
+| Injection (extended) | `test_injection_cases.py` | 19 | 18 个攻击 / 良性 fixture + 元校验,适配 dict-or-None API |
 | Contract Clauses | `test_contract_clauses.py` | 13 | 条款抽取 / 关键词归一 / 边界条件 |
+| Integration (e2e) | `test_integration.py` | 13 | 完整 pipeline / 直租场景 / 租金未确定 / guardrail 接线 / PII 端到端 |
 | PDF Parser | `test_pdf_parser.py` | 11 | pypdf 抽取 / pdfplumber 回退 / bytes 输入 / 布局模式 |
 | Contract Agent | `test_contract.py` | 11 | 端到端合同评估 / fallback / output schema |
 | Vector Store | `test_vector_store.py` | 9 | Chroma 入库 / 检索 / k 参数 / 空查询 / 重复 ingest |
@@ -35,7 +40,6 @@
 | Location Agent | `test_location.py` | 5 | MRT 匹配 / 通勤估算 / 周边评分 / AgentOutput schema |
 | Orchestrator | `test_orchestrator_a.py` | 4 | Agent 拓扑 / 离线评估 / 报告格式 / Synthesizer 指令 |
 | Main Runner | `test_main_runner.py` | 1 | CLI 入口 smoke test |
-| Integration | `test_integration.py` | **0(待实现)** | 端到端全链路覆盖在 follow-up sprint 补上 |
 
 ---
 

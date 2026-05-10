@@ -3,6 +3,30 @@
 > CA6123 · Agentic AI and Applications
 > 新加坡租房 Agentic 助手 — 多 Agent 协同 · 三层 Guardrail · Human-in-the-Loop
 
+---
+
+## Assignment Deliverables — Quick Map for Graders
+
+This table maps every Section-3 deliverable from the assignment brief to the concrete artefacts in this repo.
+
+| # | Deliverable | Where to find it | Status |
+|---|---|---|---|
+| 1 | **Overview** — objective, motivation, agentic workflow | [README §项目简介](#项目简介) + [docs/architecture.md](docs/architecture.md) + video slides 1-2 | ✅ |
+| 2 | **Perceive stage** — prompt + context engineering | [agents/intake_agent.py](agents/intake_agent.py) (LLM-driven field extraction) + [guardrails/](guardrails/) (input filtering) | ✅ |
+| 2-bonus | **Agentic RAG** | [tools/vector_store.py](tools/vector_store.py) + [agents/contract_compare.py](agents/contract_compare.py) — Chroma vector DB seeded with 4 official CEA standard templates; clauses retrieved via semantic search before deviation scoring | 🎁 **Bonus** |
+| 3 | **Reason stage** — intent classification, task breakdown | [agents/orchestrator.py](agents/orchestrator.py) (`SequentialAgent → ParallelAgent → Synthesizer` topology) + [agents/intake_agent.py](agents/intake_agent.py) (intent routing for direct-rental vs agent-rental, rent-undecided vs rent-given, small-talk short-circuit) | ✅ |
+| 4 | **Action stage** — tool-calling | All 4 specialists via `FunctionTool`: [location](agents/location_agent.py) (MRT/commute), [contract](agents/contract_agent.py) (RAG retrieval), [price](agents/price_agent.py) (CSV lookup), [risk](agents/risk_agent.py) (live data.gov.sg API + local fallback) | ✅ |
+| 5 | **Learn stage** — in-context learning | `INTERNAL_JSON_OUTPUT_INSTRUCTION` in [agents/__init__.py](agents/__init__.py) + per-agent structured instructions ground every LLM call; Pydantic `AgentOutput` schema enforces output shape | ✅ |
+| 5-bonus | **Agent Evaluation** | [tests/](tests/) — 175 automated tests across 14 files (no API key required for the deterministic path); [docs/evaluation_report.md](docs/evaluation_report.md) | 🎁 **Bonus** |
+| 6 | **AI-Human interaction** | [agents/intake_agent.py](agents/intake_agent.py)::`IntakeRouterAgent` — when required fields are missing, the system asks targeted follow-up questions instead of guessing or failing; supports both CLI flags and web PDF upload | ✅ |
+| 7 | **Responsible Agentic AI** — guardrails + testing | 3 layers in [guardrails/](guardrails/) wired into the intake router; 22 dedicated guardrail tests in [tests/test_guardrails.py](tests/test_guardrails.py) + 18 extended attack/benign cases in [tests/test_injection_cases.py](tests/test_injection_cases.py); full report in [docs/guardrail_report.md](docs/guardrail_report.md) | ✅ |
+| 7-bonus | **Advanced guardrails** — prompt injection filtering, redacted PII | [guardrails/injection_filter.py](guardrails/injection_filter.py) (17 patterns, 5 categories) + [guardrails/pii_detector.py](guardrails/pii_detector.py) (Microsoft Presidio + custom Singapore NRIC recognizer) | 🎁 **Bonus** |
+| 8 | **Conclusions** — per-member contributions, novelty, challenges | [MEMBER_CONTRIBUTIONS.md](MEMBER_CONTRIBUTIONS.md) — each member's PRs and modules, what was novel, what challenges we hit and how we resolved them | ✅ |
+
+**Bonus features summary (per Appendix B):** Agentic RAG (#1), Agent Evaluation (#3), Advanced Guardrails (#6 — both injection filtering and PII redaction).
+
+---
+
 ## 目录
 
 - [项目简介](#项目简介)
