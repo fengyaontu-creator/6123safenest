@@ -30,12 +30,16 @@ _IMMIGRATION = [
     r"\bapply\s+for\s+(?:a\s+|the\s+)?(?:PR|permanent\s+resident|EP|S\s*Pass|work\s+permit)\b",
     r"\b(?:visa|immigration)\s+(?:advice|application|status|process)\b",
     r"\bICA\s+(?:application|appeal)\b",
+    # Long-Term Visit Pass and citizenship — D contributed
+    r"\b(?:long\s*term\s*visit\s*pass|LTVP|citizenship)\b",
 ]
 
 _FINANCIAL = [
     r"\bguarantee\s+(?:100%|approval|success)",
     r"\bfinancial\s+(?:advice|planning|guarantee)\b",
     r"\b(?:loan|mortgage)\s+approval\b",
+    # Asking the bot to forecast market trends — D contributed
+    r"\b(?:predict|forecast)\s+(?:rental|property|market)\s+(?:price|trend|movement)\b",
 ]
 
 _MEDICAL = [
