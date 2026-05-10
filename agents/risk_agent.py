@@ -711,9 +711,24 @@ def run_risk_assessment(
             "score": None,
             "identity": "",
             "source_mode": source_mode,
-            "findings": ["No agent name or CEA registration number found."],
+            "findings": [
+                "No real estate agent identity provided. This may be a direct "
+                "rental from the landlord, or the agent's details are missing."
+            ],
             "recommendations": [
-                "Ask for the agent's full name and CEA registration number, then verify it before paying."
+                # If through an agent
+                "If renting through an agent: ask for their full name and CEA "
+                "registration number, then verify at cea.gov.sg before paying.",
+                # If direct from landlord
+                "If renting directly from the landlord: confirm property "
+                "ownership via SLA's Land Inquiry "
+                "(https://app02.sla.gov.sg/inlis/), and ask the landlord for "
+                "their NRIC to cross-check identity.",
+                "Always demand a written tenancy agreement signed by the "
+                "landlord (not a third party).",
+                "Never pay deposit before viewing the unit in person.",
+                "Transfer rent to the landlord's named bank account only — "
+                "avoid PayLah / cash to unverified accounts.",
             ],
             "evidence": [],
         }

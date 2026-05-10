@@ -19,7 +19,6 @@ from pydantic import Field
 
 REQUIRED_FIELDS = {
     "address": "rental address",
-    "rent": "monthly rent",
     "contract_path": "contract PDF",
 }
 
