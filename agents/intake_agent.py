@@ -91,7 +91,7 @@ def _analysis_fallback_report(state: dict[str, Any], error: Exception) -> str:
     from agents.location_agent import assess_location
     from agents.price_agent import assess_price
     from agents.risk_agent import assess_risk
-    from agents.synthesizer import format_report, synthesize_outputs
+    from agents.synthesizer import format_report, polish_with_llm, synthesize_outputs
 
     request = AgentInput(
         address=state.get("address"),
@@ -115,7 +115,11 @@ def _analysis_fallback_report(state: dict[str, Any], error: Exception) -> str:
             ),
         ]
     )
-    report = format_report(output)
+    # The deterministic format_report() output is technical-looking
+    # (agent_name: prefixes, [FLAG] / [OK] tags, CLI flags). Run it through
+    # one Gemini call to make it tenant-readable. If LLM is unavailable,
+    # polish_with_llm returns the raw report unchanged.
+    report = polish_with_llm(format_report(output))
     return (
         f"{report}\n\n"
         "Note: The live Gemini specialist run was temporarily unavailable, "
