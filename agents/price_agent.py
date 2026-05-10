@@ -170,11 +170,14 @@ def compute_price_statistics(address: str, room_type: str = "") -> dict[str, Any
 
 
 def evaluate_rent_reasonableness(
-    rent: float,
+    rent: float | None,
     address: str,
     room_type: str = "",
 ) -> dict[str, Any]:
     """评估给定月租在同区是否合理,并给出议价建议。
+
+    When ``rent`` is None, returns a market-range-only result so the user can
+    pick a budget before committing to a number.
 
     Returns:
         含 verdict / score / suggestion / stats 的字典。
@@ -202,6 +205,24 @@ def evaluate_rent_reasonableness(
                 f"Only {sample_size} comparable listing(s) in this area — "
                 "not enough to give a reliable rent verdict. Broaden the search "
                 "area or wait for more listings."
+            ),
+            "stats": stats,
+        }
+
+    # User hasn't decided rent yet — return area market range so they can budget.
+    if rent is None:
+        return {
+            "verdict": "market_range_only",
+            "score": None,
+            "rent_input": None,
+            "median": stats["median"],
+            "p25": stats["p25"],
+            "p75": stats["p75"],
+            "suggestion": (
+                f"This area ({stats['area']}) typically rents from "
+                f"SGD {round(stats['p25']):,} to SGD {round(stats['p75']):,} "
+                f"(median SGD {round(stats['median']):,}). "
+                "Set your budget within this range, then ask again for a deal verdict."
             ),
             "stats": stats,
         }
@@ -249,11 +270,15 @@ def evaluate_rent_reasonableness(
 # ===== 主入口:确定性评估(测试 / CLI 用这个) =====
 
 def run_price_assessment(
-    rent: float,
+    rent: float | None,
     address: str,
     bedrooms: int | None = None,
 ) -> dict[str, Any]:
-    """Run all price checks in one ADK tool call."""
+    """Run all price checks in one ADK tool call.
+
+    ``rent`` may be None — the user might not have decided on a target rent
+    yet and just want the area's market range.
+    """
 
     room_type = _bedrooms_to_room_type(bedrooms)
     return {
@@ -284,18 +309,47 @@ def assess_price(input_data: AgentInput | dict[str, Any]) -> AgentOutput:
     bedrooms = request.bedrooms
     room_type = _bedrooms_to_room_type(bedrooms)
 
-    # ---- 输入缺失:优雅返回 ----
-    if not address or rent is None:
+    # ---- 输入缺失:address 是硬要求 ----
+    if not address:
         return AgentOutput(
             agent_name="price_agent",
-            summary="Price assessment requires both an address and a rent value.",
+            summary="Price assessment requires an address.",
             risk_level="unknown",
-            findings=["Missing address or rent input."],
-            recommendations=["Provide --address and --rent to the CLI."],
+            findings=["Missing address input."],
+            recommendations=["Provide --address (and optionally --rent) to the CLI."],
             data={"rent": rent, "address": address, "bedrooms": bedrooms},
         )
 
     eval_result = evaluate_rent_reasonableness(rent, address, room_type)
+
+    # ---- rent 未确定:返回区域行情,不打分 ----
+    if rent is None and eval_result.get("verdict") == "market_range_only":
+        stats = eval_result["stats"]
+        return AgentOutput(
+            agent_name="price_agent",
+            summary=(
+                f"No target rent provided. {stats['area']} typically rents "
+                f"SGD {round(stats['p25']):,}–{round(stats['p75']):,} "
+                f"(median SGD {round(stats['median']):,})."
+            ),
+            risk_level="unknown",
+            score=None,
+            findings=[
+                f"Area: {stats['area']} ({stats['sample_size']} comparable listings).",
+                f"Area median rent: SGD {stats['median']:,.0f}.",
+                f"25th–75th percentile: SGD {stats['p25']:,.0f} – SGD {stats['p75']:,.0f}.",
+            ],
+            evidence=[
+                f"listings.csv ({stats['sample_size']} entries in {stats['area']})",
+            ],
+            recommendations=[eval_result["suggestion"]],
+            data={
+                "rent": None,
+                "address": address,
+                "bedrooms": bedrooms,
+                "evaluation": eval_result,
+            },
+        )
 
     # ---- 找不到可比数据:返回 unknown ----
     if eval_result["score"] is None:
