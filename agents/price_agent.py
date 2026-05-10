@@ -351,16 +351,22 @@ def assess_price(input_data: AgentInput | dict[str, Any]) -> AgentOutput:
             },
         )
 
-    # ---- 找不到可比数据:返回 unknown ----
+    # ---- 找不到可比数据 / 样本太小:返回 unknown ----
     if eval_result["score"] is None:
+        # rent may be None here (rent-undecided + insufficient_data combo)
+        rent_finding = (
+            f"Input rent: SGD {rent:,.0f}."
+            if rent is not None
+            else "No target rent provided."
+        )
         return AgentOutput(
             agent_name="price_agent",
-            summary=f"No comparable listings for {address}; cannot benchmark rent.",
+            summary=f"No usable benchmark for {address}; cannot rate rent.",
             risk_level="unknown",
             findings=[
-                f"Input rent: SGD {rent:,.0f}.",
+                rent_finding,
                 f"Address: {address}.",
-                eval_result.get("message", ""),
+                eval_result.get("message") or eval_result.get("suggestion") or "",
             ],
             recommendations=[
                 "Add more listings to data/listings.csv or broaden the search area.",
