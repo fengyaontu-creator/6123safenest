@@ -25,16 +25,16 @@ graph TB
     end
 
     subgraph FOUR["Four Specialist Agents (parallel)"]
-        LOC["Location Agent<br/>tools: nearest_mrt<br/>commute_estimate<br/>surrounding_amenities<br/>data: mrt_stations.json"]
-        CON["Contract Agent<br/>tools: search_cea_clause<br/>data: Chroma vector DB<br/>4 CEA template PDFs"]
-        PRI["Price Agent<br/>tools: lookup_market_rents<br/>data: listings.csv<br/>20 historical listings"]
-        RSK["Risk Agent<br/>tools: verify_cea_agent<br/>API: data.gov.sg<br/>fallback: cea_agents.csv"]
+        LOC["Location Agent<br/>tool: run_location_assessment<br/>data: mrt_stations.json"]
+        CON["Contract Agent<br/>tool: analyze_contract_text<br/>data: Chroma vector DB<br/>4 CEA template PDFs"]
+        PRI["Price Agent<br/>tool: run_price_assessment<br/>data: listings.csv (20 rows)"]
+        RSK["Risk Agent<br/>tool: run_risk_assessment<br/>data: cea_agents.csv (37715 rows)"]
     end
 
     SYNTH["Synthesizer<br/>merge location + contract +<br/>price + risk outputs<br/>→ Markdown report"]
 
-    subgraph GR_OUT["Guardrail-Out"]
-        SCOPE["scope_guard.py<br/>15 out-of-scope patterns<br/>refuse legal / immigration"]
+    subgraph GR_OUT["Guardrail-In (cont.)"]
+        SCOPE["scope_guard.py<br/>14 out-of-scope patterns<br/>refuse legal / immigration / etc."]
     end
 
     REPORT["Final Report"]
@@ -76,12 +76,14 @@ graph TB
 - **确定性路径**：`assess_*()` 函数，Python 规则逻辑，零 LLM 调用，用于 CLI / 测试 / 离线场景
 - **ADK 路径**：`create_*_agent()` LlmAgent，LLM + 工具函数，用于 Web 交互
 
-| Agent | 核心工具 | 数据源 | 评分逻辑 |
+| Agent | 暴露给 LLM 的工具 | 数据源 | 评分逻辑 |
 |------|---------|--------|---------|
-| Location | `nearest_mrt`, `commute_estimate`, `surrounding_amenities` | `mrt_stations.json`（10 站） | 通勤分(60%) + 周边分(40%)，0-100 |
-| Contract | `search_cea_clause` | Chroma（4 份 CEA 标准 PDF） | 4 条款关键词重叠度 → 偏差分(0-100) |
-| Price | `lookup_market_rents` | `listings.csv`（20 条） | 租金在市场中的百分位 → 分数映射 |
-| Risk | `verify_cea_agent` | data.gov.sg API + `cea_agents.csv`（30 条） | 注册(60) + 有效期(25) + 数据源(15) = 100 |
+| Location | `run_location_assessment`(内部并 `nearest_mrt` + `commute_estimate` × 2 + `surrounding_amenities`) | `mrt_stations.json`（10 站） | 通勤分(60%) + 周边分(40%)，0-100 |
+| Contract | `analyze_contract_text`(内部:`extract_clauses` + `compare_to_cea_standard` + `compute_contract_risk`) | Chroma（4 份 CEA 标准 PDF） | 4 条款关键词重叠度 → 偏差分(0-100) |
+| Price | `run_price_assessment`(内部:`lookup_comparable_listings` + `compute_price_statistics` + `evaluate_rent_reasonableness`) | `listings.csv`（20 条） | 租金在市场中的百分位 → 分数映射 |
+| Risk | `run_risk_assessment`(内部:`verify_cea_agent` + `compute_risk_score` + `generate_risk_tips`) | data.gov.sg API + `cea_agents.csv`（**37715 条**真实 CEA 注册名单） | 注册(60) + 有效期(25) + 数据源(15) = 100 |
+
+> **工具粒度说明**：每个 sub-agent 只暴露 **1 个聚合工具** 给 LLM,内部按确定顺序调用多个原子函数。这种设计是为了避免 LLM 在多个工具之间反复决策导致 AFC 调用循环 —— 详见 [agents/__init__.py:`afc_limiter`](../agents/__init__.py)。
 
 ---
 
@@ -197,5 +199,5 @@ Final Report
 | Agent 框架 | Google ADK (Python) | SequentialAgent + ParallelAgent + LlmAgent |
 | 向量库 | Chroma | 本地 ONNX embedding，无外部 API 依赖 |
 | PDF 解析 | pypdf + pdfplumber | 双层策略：pypdf 快读，pdfplumber 回退 |
-| PII 检测 | Microsoft Presidio | Guardrail-In；无 Presidio 时降级跳过 |
+| PII 检测 | regex-based(Presidio-aware) | Guardrail-In;regex 检测 NRIC / EMAIL / SG_PHONE / PERSON,Presidio import 失败时降级返回空。详见 [docs/guardrail_report.md](guardrail_report.md) |
 | 观测 | ADK 内置 trace | OTel exporter 已禁用（Python 3.13 兼容） |

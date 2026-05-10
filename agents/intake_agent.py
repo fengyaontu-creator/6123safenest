@@ -13,6 +13,7 @@ from google.adk.agents import BaseAgent
 from google.adk.agents.invocation_context import InvocationContext
 from google.adk.events import Event, EventActions
 from google.genai import types
+from guardrails import check_injection, check_scope, redact_pii
 from pydantic import Field
 
 
@@ -261,6 +262,46 @@ class IntakeRouterAgent(BaseAgent):
         self,
         ctx: InvocationContext,
     ) -> AsyncGenerator[Event, None]:
+        user_text = _content_text(ctx)
+        if user_text.strip():
+            injection_hit = check_injection(user_text)
+            if injection_hit:
+                ctx.end_invocation = True
+                ctx.session.state["guardrail_block"] = {
+                    "layer": "injection_filter",
+                    "category": injection_hit["category"],
+                }
+                yield Event(
+                    author=self.name,
+                    invocation_id=ctx.invocation_id,
+                    content=types.Content(
+                        role="model",
+                        parts=[types.Part(text=injection_hit["message"])],
+                    ),
+                    actions=EventActions(end_of_agent=True),
+                )
+                return
+
+            scope_hit = check_scope(user_text)
+            if scope_hit:
+                ctx.end_invocation = True
+                ctx.session.state["guardrail_block"] = {
+                    "layer": "scope_guard",
+                    "category": scope_hit["category"],
+                }
+                yield Event(
+                    author=self.name,
+                    invocation_id=ctx.invocation_id,
+                    content=types.Content(
+                        role="model",
+                        parts=[types.Part(text=scope_hit["message"])],
+                    ),
+                    actions=EventActions(end_of_agent=True),
+                )
+                return
+
+            ctx.session.state["user_query_redacted"] = redact_pii(user_text)
+
         state = dict(ctx.session.state)
 
         if self.sub_agents and self.sub_agents[0].name == "intake_extractor":
