@@ -432,9 +432,57 @@ def assess_risk(
             data=data,
         )
 
-    # --- No agent to verify → general screening -----------------------------
+    # --- No agent to verify → classify the scenario -------------------------
     findings: list[str] = []
     recommendations: list[str] = []
+
+    # Check if user explicitly said there's no agent (direct landlord deal)
+    _no_agent_hints = [
+        r"direct\s+(landlord|owner)", r"no\s+agent", r"without\s+agent",
+        r"直接\s*(找|和|跟|与)?\s*房东", r"没有\s*(中介|代理|经纪)",
+        r"无\s*中介", r"private\s+landlord", r"owner\s+(directly|himself)",
+        r"landlord\s+(direct|directly)", r"房东\s*(直接|本人)",
+    ]
+    user_text = ""
+    if request.contract_text:
+        user_text = request.contract_text
+    elif request.address:
+        user_text = request.address
+    is_direct_landlord = any(
+        re.search(hint, user_text, re.IGNORECASE) for hint in _no_agent_hints
+    )
+
+    if is_direct_landlord:
+        findings.append(
+            "Direct landlord deal detected — no salesperson/agent involved. "
+            "CEA agent verification is not applicable."
+        )
+        recommendations.append(
+            "When renting directly from a landlord, verify the landlord's "
+            "identity against the property ownership records (e.g. via SLA "
+            "or IRAS property tax statement). Confirm the bank account name "
+            "matches the landlord's NRIC name before transferring any deposit."
+        )
+        recommendations.append(
+            "Ensure the tenancy agreement includes clear maintenance "
+            "responsibilities, inventory lists, and stamp duty obligations "
+            "— these are often problematic in direct rental deals."
+        )
+        return AgentOutput(
+            agent_name="risk_agent",
+            summary="Direct landlord deal — no CEA agent involvement. Verify landlord identity independently.",
+            risk_level="medium",
+            score=None,
+            findings=findings,
+            evidence=[],
+            recommendations=recommendations,
+            data={
+                "address": address,
+                "landlord_mode": "direct",
+                "contract_path_provided": bool(request.contract_path),
+                "contract_text_provided": bool(request.contract_text),
+            },
+        )
 
     if address:
         findings.append(f"Rental address: {address}.")

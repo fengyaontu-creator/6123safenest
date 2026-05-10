@@ -43,9 +43,7 @@ chroma_data/
 
 # --- IDE ---
 .idea/
-.vscode/*
-!.vscode/settings.json
-!.vscode/extensions.json
+.vscode/
 
 # --- OS ---
 .DS_Store

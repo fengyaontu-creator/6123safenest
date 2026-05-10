@@ -13,20 +13,24 @@ from google.adk.agents import BaseAgent
 from google.adk.agents.invocation_context import InvocationContext
 from google.adk.events import Event, EventActions
 from google.genai import types
+from guardrails.injection_filter import INJECTION_BLOCK_MESSAGE, check_injection
+from guardrails.pii_detector import detect_pii
+from guardrails.scope_guard import SCOPE_REFUSAL_TEMPLATE, check_scope
 from pydantic import Field
 
 
+# Only address and rent are truly required to start analysis.
+# contract_path is optional — users can still get location + price reports without a PDF.
 REQUIRED_FIELDS = {
     "address": "rental address",
     "rent": "monthly rent",
-    "contract_path": "contract PDF",
 }
 
 INTAKE_EXTRACTION_KEY = "intake_extraction"
 
 FIELD_QUESTIONS = {
     "address": "What is the rental property's full address or nearest block/street?",
-    "rent": "What is the monthly rent in SGD?",
+    "rent": "What is the monthly rent in SGD? (No worries if it's still being negotiated — just give me a ballpark figure or type 'not sure')",
     "contract_path": "Please provide the rental contract PDF path, for example data/sample_contract.pdf.",
 }
 
@@ -34,6 +38,36 @@ WEB_FIELD_QUESTIONS = {
     **FIELD_QUESTIONS,
     "contract_path": "Please upload the rental contract PDF file.",
 }
+
+# Phrases that suggest the user is still negotiating / doesn't have a firm number yet.
+_NEGOTIATING_HINTS = {
+    "rent": [r"还在谈", r"negotiating|negotiation", r"not\s+sure", r"don't\s+know",
+              r"待定", r"未定", r"暂未", r"tbd|t\.b\.d", r"to\s+be\s+(decided|confirmed|determined)",
+              r"pending", r"no\s+(firm|fixed|exact)\s+(number|price|rent)", r"flexible", r"可谈"],
+}
+
+# Small-talk patterns — when matched, the agent responds conversationally
+# instead of demanding rental fields.
+_SMALL_TALK_PATTERNS = [
+    re.compile(p, re.IGNORECASE)
+    for p in [
+        r"^(hi|hello|hey|greetings|good\s+(morning|afternoon|evening))[!\s]*$",
+        r"^(who\s+are\s+you|what\s+are\s+you|what\s+do\s+you\s+do|what\s+is\s+your\s+(name|purpose))",
+        r"^(thanks?|thank\s+you|thx|ty)[!\s]*$",
+        r"^(how\s+are\s+you|what's\s+up|sup|howdy|yo)[!\s]*$",
+        r"^(你好|您好|嗨|哈喽|在吗|你是谁|你好吗)[!\s]*$",
+        r"^(谢谢|多谢|感谢)[!\s]*$",
+    ]
+]
+
+_SMALL_TALK_REPLY = (
+    "Hi! I'm SafeNest, your Singapore rental assistant. I can help you with:\n"
+    "- 📍 Location & commute analysis (nearest MRT, amenities)\n"
+    "- 💰 Rent price benchmarking against market data\n"
+    "- 📄 Contract clause checks (upload a PDF)\n"
+    "- 🛡️ CEA agent verification (check if your salesperson is registered)\n\n"
+    "Just tell me the rental address and monthly rent, and I'll get started!"
+)
 
 
 def _content_text(ctx: InvocationContext) -> str:
@@ -236,8 +270,30 @@ def missing_required_fields(data: dict[str, Any]) -> list[str]:
     return missing
 
 
-def build_missing_info_question(missing: list[str], interface: str | None = None) -> str:
+def build_missing_info_question(
+    missing: list[str],
+    interface: str | None = None,
+    user_input: str = "",
+) -> str:
     field_questions = WEB_FIELD_QUESTIONS if interface == "web" else FIELD_QUESTIONS
+
+    # Detect negotiation / uncertain context for rent
+    rent_negotiating = False
+    if "rent" in missing and user_input:
+        import re as _re
+        for hint_re in _NEGOTIATING_HINTS.get("rent", []):
+            if _re.search(hint_re, user_input, _re.IGNORECASE):
+                rent_negotiating = True
+                break
+
+    if rent_negotiating and len(missing) == 1:
+        return (
+            "No worries! The rent is still being negotiated — take your time. "
+            "I can still look up the location, check the market prices in that area, "
+            "and verify the agent for you. "
+            "Just tell me the rental address or the agent's name and I'll get started!"
+        )
+
     questions = [field_questions[key] for key in missing]
     if len(questions) == 1:
         return (
@@ -261,6 +317,69 @@ class IntakeRouterAgent(BaseAgent):
         self,
         ctx: InvocationContext,
     ) -> AsyncGenerator[Event, None]:
+        # ─── Guardrail-In: Prompt Injection Check ──────────────────────────
+        user_text = _content_text(ctx)
+        blocked, reason = check_injection(user_text)
+        if blocked:
+            ctx.end_invocation = True
+            yield Event(
+                author=self.name,
+                invocation_id=ctx.invocation_id,
+                content=types.Content(
+                    role="model",
+                    parts=[types.Part(text=INJECTION_BLOCK_MESSAGE)],
+                ),
+                actions=EventActions(end_of_agent=True),
+            )
+            return
+
+        # ─── Guardrail-In: PII Detection & Redaction ───────────────────────
+        pii_entities = detect_pii(user_text)
+        if pii_entities:
+            from guardrails.pii_detector import anonymize_pii
+            sanitized = anonymize_pii(user_text)
+            if sanitized != user_text:
+                logger = __import__("logging").getLogger(__name__)
+                logger.info("PII detected and redacted: %s entities", len(pii_entities))
+
+        # ─── Guardrail-Out: Scope Check ────────────────────────────────────
+        refused, scope_reason = check_scope(user_text)
+        if refused:
+            ctx.end_invocation = True
+            topic = scope_reason or "this topic"
+            yield Event(
+                author=self.name,
+                invocation_id=ctx.invocation_id,
+                content=types.Content(
+                    role="model",
+                    parts=[
+                        types.Part(
+                            text=SCOPE_REFUSAL_TEMPLATE.format(
+                                reason=scope_reason, topic=topic
+                            )
+                        )
+                    ],
+                ),
+                actions=EventActions(end_of_agent=True),
+            )
+            return
+
+        # ─── Small-talk detection ──────────────────────────────────────────
+        for pattern in _SMALL_TALK_PATTERNS:
+            if pattern.search(user_text.strip()):
+                ctx.end_invocation = True
+                yield Event(
+                    author=self.name,
+                    invocation_id=ctx.invocation_id,
+                    content=types.Content(
+                        role="model",
+                        parts=[types.Part(text=_SMALL_TALK_REPLY)],
+                    ),
+                    actions=EventActions(end_of_agent=True),
+                )
+                return
+
+        # ─── Normal Intake Flow ────────────────────────────────────────────
         state = dict(ctx.session.state)
 
         if self.sub_agents and self.sub_agents[0].name == "intake_extractor":
@@ -271,9 +390,13 @@ class IntakeRouterAgent(BaseAgent):
             ctx.session.state.get(INTAKE_EXTRACTION_KEY)
         )
         fallback_extracted = extract_rental_info_from_query(_content_text(ctx))
+        # Merge: LLM wins, but fallback fills gaps.  Also copy optional fields
+        # (agent_name, agent_reg_no, bedrooms) that the LLM may have found.
         extracted = {**fallback_extracted, **model_extracted}
         extracted = {
-            key: value for key, value in extracted.items() if state.get(key) in (None, "")
+            key: value
+            for key, value in extracted.items()
+            if value not in (None, "") and state.get(key) in (None, "")
         }
 
         if extracted:
@@ -294,6 +417,7 @@ class IntakeRouterAgent(BaseAgent):
                             text=build_missing_info_question(
                                 missing,
                                 str(state.get("interface") or ""),
+                                _content_text(ctx),
                             )
                         )
                     ],
@@ -353,4 +477,5 @@ __all__ = [
     "INTAKE_EXTRACTION_KEY",
     "missing_required_fields",
     "parse_model_extraction",
+    "_SMALL_TALK_REPLY",
 ]

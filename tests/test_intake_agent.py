@@ -42,7 +42,7 @@ def test_reports_missing_after_partial_extraction():
 
     assert data["address"] == "123 Jurong West"
     assert data["rent"] == 2000
-    assert missing_required_fields(data) == ["contract_path"]
+    assert missing_required_fields(data) == []  # contract_path is no longer required
 
 
 def test_parses_model_extraction_json_fence():
