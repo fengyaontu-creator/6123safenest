@@ -14,7 +14,7 @@ from datetime import date, datetime
 from pathlib import Path
 from typing import Any
 
-from agents import AgentInput, AgentOutput, INTERNAL_JSON_OUTPUT_INSTRUCTION, afc_limiter
+from agents import AgentInput, AgentOutput, INTERNAL_JSON_OUTPUT_INSTRUCTION
 from config import settings
 from google.adk.agents import LlmAgent
 from google.adk.tools import FunctionTool
@@ -573,8 +573,10 @@ def compute_risk_score(
             reg_status = "active"
             status_label = "有效 (Active)"
     else:
-        reg_status = "active"
-        status_label = "有效 (Active)"
+        # status="verified" but no records (registration_end_date was empty/missing).
+        # Treat this as a data-quality issue, not as an active registration.
+        reg_status = "unknown"
+        status_label = "状态未知 (Verified but no registration data)"
 
     return {
         "score": result["score"],
@@ -763,58 +765,6 @@ def run_risk_assessment(
     }
 
 
-_RISK_AGENT_LEGACY_INSTRUCTION = """\
-You screen Singapore rental leads for scam and compliance risks.
-
-Workflow (follow this order exactly):
-1. Look for agent identity clues in the contract text (e.g. "Agent:", "Salesperson:",
-   "CEA Reg No:", "RxxxxxxX" patterns). When you find a name or registration number,
-   call ``verify_cea_agent`` with query_type "name" or "reg_no".
-2. Take the "status" and "source" from the verification result.  Find the
-   "registration_end_date", "estate_agent_name", and "estate_agent_license_no"
-   from the first record (if any).  Call ``compute_risk_score`` with these values.
-3. Look for a company / agency name in the contract text (e.g. after "Estate Agent:",
-   "Agency:", or the letterhead).  Call ``generate_risk_tips`` with the same
-   verification fields PLUS the ``contract_company_name`` if found — this enables
-   a company cross-check recommendation.
-4. Assemble the final JSON AgentOutput using the values returned by the tools.
-   Do NOT invent your own score, risk_level, or recommendations.
-
-In the final JSON AgentOutput:
-- If the user directly provided an agent name or reg no (``agent_name`` /
-  ``agent_reg_no`` is set): keep the report *concise*.
-  - ``summary``: one-liner with status_label and score.
-  - ``findings``: if score == 100, a single "verified, no issues found".
-    Otherwise list only the deductions and their reasons.
-- If you found the agent by searching the contract text (``contract_text``):
-  keep the report *detailed*.
-  - ``summary``: one sentence covering status_label, risk_level and score.
-  - ``findings``: include status_label, then all reasons from compute_risk_score.
-  - ``recommendations``: use the exact list from generate_risk_tips.
-  - ``evidence``: include the CEA record details for traceability.
-
-Available data from session state:
-  Rental address: {address?}
-  Monthly rent (SGD): {rent?}
-  Number of bedrooms: {bedrooms?}
-  Agent name (if provided by user): {agent_name?}
-  Agent CEA reg no (if provided by user): {agent_reg_no?}
-  Contract file name: {contract_file_name?}
-  Extracted contract text: {contract_text?}
-
-If the user has already provided an agent name or CEA registration number (see
-``agent_name`` / ``agent_reg_no`` above), use it directly — no need to search
-the contract text.  If both a name and contract text are available, verify
-the name first, then also check the contract for additional agent details.
-
-If no agent name can be found, output risk_level "unknown", score null, and
-general scam-screening recommendations.  Do not call the tools in that case.
-
-Output a concise JSON AgentOutput. The ``risk_level`` must be one of:
-"low", "medium", "high", or "unknown".  ``score`` must be a float 0-100 or null.
-"""
-
-
 RISK_AGENT_INSTRUCTION = """\
 You screen Singapore rental leads for scam and compliance risks.
 
@@ -856,7 +806,6 @@ def create_risk_agent(model: str = settings.specialist_model) -> LlmAgent:
         model=model,
         instruction=RISK_AGENT_INSTRUCTION + "\n" + INTERNAL_JSON_OUTPUT_INSTRUCTION,
         tools=[FunctionTool(run_risk_assessment)],
-        generate_content_config=afc_limiter(2),
         output_key="risk_output",
     )
 

@@ -14,7 +14,7 @@ import logging
 from pathlib import Path
 from typing import Any
 
-from agents import AgentInput, AgentOutput, INTERNAL_JSON_OUTPUT_INSTRUCTION, afc_limiter
+from agents import AgentInput, AgentOutput, INTERNAL_JSON_OUTPUT_INSTRUCTION
 from agents.contract_clauses import extract_clauses
 from agents.contract_compare import compare_to_cea_standard
 from agents.contract_risk import (
@@ -25,7 +25,7 @@ from agents.contract_risk import (
 from config import settings
 from google.adk.agents import LlmAgent
 from google.adk.tools import FunctionTool
-from tools.pdf_parser import extract_pages, extract_text
+from tools.pdf_parser import extract_pages
 from tools.vector_store import ContractKnowledgeBase, seed_from_cea_templates
 
 logger = logging.getLogger(__name__)
@@ -323,7 +323,6 @@ def create_contract_agent(model: str = settings.specialist_model) -> LlmAgent:
         model=model,
         instruction=CONTRACT_AGENT_INSTRUCTION + "\n" + INTERNAL_JSON_OUTPUT_INSTRUCTION,
         tools=[FunctionTool(analyze_contract_text)],
-        generate_content_config=afc_limiter(2),
         output_key="contract_output",
     )
 

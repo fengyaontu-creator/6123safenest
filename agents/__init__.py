@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from typing import Any, Literal
 
-from google.genai import types
 from pydantic import BaseModel, Field
 
 
@@ -44,20 +43,9 @@ user-facing report.
 """
 
 
-def afc_limiter(maximum_remote_calls: int = 2) -> types.GenerateContentConfig:
-    """Limit Gemini automatic function-calling loops for ADK tool agents."""
-
-    return types.GenerateContentConfig(
-        automatic_function_calling=types.AutomaticFunctionCallingConfig(
-            maximum_remote_calls=maximum_remote_calls,
-        )
-    )
-
-
 __all__ = [
     "AgentInput",
     "AgentOutput",
     "INTERNAL_JSON_OUTPUT_INSTRUCTION",
     "RiskLevel",
-    "afc_limiter",
 ]

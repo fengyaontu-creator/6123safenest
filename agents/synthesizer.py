@@ -71,12 +71,16 @@ def create_synthesizer_agent(model: str = settings.synthesizer_model) -> LlmAgen
         name="synthesizer",
         model=model,
         instruction=(
-            "Combine the four specialist outputs stored in ADK session state under "
-            "these keys: location_output, contract_output, price_output, and "
-            "risk_output. If a key is missing or unavailable, explicitly mark that "
-            "section as unavailable instead of failing.\n\n"
-            "Produce a concise tenant-facing rental risk report with an overall "
-            "risk level, key evidence, and practical next actions."
+            "Combine the four specialist outputs from session state into a "
+            "single tenant-facing rental risk report.\n\n"
+            "Location agent output: {location_output}\n"
+            "Contract agent output: {contract_output}\n"
+            "Price agent output: {price_output}\n"
+            "Risk agent output: {risk_output}\n\n"
+            "If any output is missing or marked unavailable, explicitly mark "
+            "that section as unavailable instead of failing.\n\n"
+            "Produce a concise report with an overall risk level, key "
+            "evidence from each specialist, and practical next actions."
         ),
         output_key="final_report",
     )
