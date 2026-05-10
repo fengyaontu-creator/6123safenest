@@ -22,6 +22,30 @@ REQUIRED_FIELDS = {
     "contract_path": "contract PDF",
 }
 
+# Small-talk: short greetings / "who are you" / thanks. When matched, the
+# router replies conversationally instead of demanding rental fields.
+# D contributed the bilingual pattern set.
+_SMALL_TALK_PATTERNS = [
+    re.compile(p, re.IGNORECASE)
+    for p in [
+        r"^(hi|hello|hey|greetings|good\s+(morning|afternoon|evening))[!\s]*$",
+        r"^(who\s+are\s+you|what\s+are\s+you|what\s+do\s+you\s+do|what\s+is\s+your\s+(name|purpose))",
+        r"^(thanks?|thank\s+you|thx|ty)[!\s]*$",
+        r"^(how\s+are\s+you|what's\s+up|sup|howdy|yo)[!\s]*$",
+        r"^(你好|您好|嗨|哈喽|在吗|你是谁|你好吗)[!\s]*$",
+        r"^(谢谢|多谢|感谢)[!\s]*$",
+    ]
+]
+
+_SMALL_TALK_REPLY = (
+    "Hi! I'm SafeNest, your Singapore rental assistant. I can help with:\n"
+    "- Location & commute analysis (nearest MRT, amenities)\n"
+    "- Rent benchmarking against market data\n"
+    "- Contract clause checks (upload a PDF)\n"
+    "- CEA agent verification (check if your salesperson is registered)\n\n"
+    "Tell me the rental address and (optionally) the monthly rent, and I'll start."
+)
+
 INTAKE_EXTRACTION_KEY = "intake_extraction"
 
 FIELD_QUESTIONS = {
@@ -300,6 +324,22 @@ class IntakeRouterAgent(BaseAgent):
                 return
 
             ctx.session.state["user_query_redacted"] = redact_pii(user_text)
+
+            # Small-talk short-circuit: greet / explain capabilities, skip
+            # the extractor + analysis pipeline. Costs zero LLM calls.
+            stripped = user_text.strip()
+            if any(pattern.search(stripped) for pattern in _SMALL_TALK_PATTERNS):
+                ctx.end_invocation = True
+                yield Event(
+                    author=self.name,
+                    invocation_id=ctx.invocation_id,
+                    content=types.Content(
+                        role="model",
+                        parts=[types.Part(text=_SMALL_TALK_REPLY)],
+                    ),
+                    actions=EventActions(end_of_agent=True),
+                )
+                return
 
         state = dict(ctx.session.state)
 

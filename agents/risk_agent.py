@@ -436,6 +436,64 @@ def assess_risk(
     findings: list[str] = []
     recommendations: list[str] = []
 
+    # First, check whether the user explicitly framed this as a direct-landlord
+    # rental. If so, CEA verification is by design not applicable, and we
+    # should give landlord-specific guidance instead of agent guidance.
+    # D contributed the bilingual hint patterns.
+    _no_agent_hints = [
+        r"direct\s+(?:landlord|owner)",
+        r"no\s+agent",
+        r"without\s+(?:an?\s+)?agent",
+        r"private\s+landlord",
+        r"landlord\s+(?:direct|directly)",
+        r"owner\s+(?:directly|himself|herself)",
+        r"直接\s*(?:找|和|跟|与)?\s*房东",
+        r"没有\s*(?:中介|代理|经纪)",
+        r"无\s*中介",
+        r"房东\s*(?:直接|本人)",
+    ]
+    landlord_search_text = (request.contract_text or "") + " " + (address or "")
+    is_direct_landlord = any(
+        re.search(hint, landlord_search_text, re.IGNORECASE)
+        for hint in _no_agent_hints
+    )
+
+    if is_direct_landlord:
+        return AgentOutput(
+            agent_name="risk_agent",
+            summary=(
+                "Direct landlord rental detected — no CEA agent involvement. "
+                "Verify landlord identity independently."
+            ),
+            risk_level="medium",
+            score=None,
+            findings=[
+                "Direct landlord deal — no salesperson/agent involved. "
+                "CEA registry verification is not applicable.",
+                f"Rental address: {address}." if address else "No address provided.",
+            ],
+            evidence=[],
+            recommendations=[
+                "Verify the landlord's identity against property ownership "
+                "records — SLA Land Inquiry "
+                "(https://app02.sla.gov.sg/inlis/) or the IRAS property tax "
+                "statement. Cross-check the landlord's NRIC name against "
+                "the bank account name before transferring any deposit.",
+                "Demand a written tenancy agreement signed by the landlord "
+                "(not a third party) with explicit clauses for maintenance "
+                "responsibilities, inventory, and stamp duty obligations.",
+                "Never pay deposit before viewing the unit in person.",
+                "Transfer rent to the landlord's named bank account only — "
+                "avoid PayLah / cash to unverified accounts.",
+            ],
+            data={
+                "address": address,
+                "landlord_mode": "direct",
+                "contract_path_provided": bool(request.contract_path),
+                "contract_text_provided": bool(request.contract_text),
+            },
+        )
+
     if address:
         findings.append(f"Rental address: {address}.")
 

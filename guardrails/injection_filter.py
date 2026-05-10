@@ -22,12 +22,12 @@ _INSTRUCTION_OVERRIDE = [
     (r"ignore\s+(?:all\s+)?(?:previous|prior|the\s+above)\s+instructions?", 0.9),
     (r"forget\s+(?:everything|all|you\s+know|your\s+(?:training|instructions))", 0.85),
     (r"disregard\s+(?:all\s+)?(?:previous|prior|the\s+above|your)\s+\w+", 0.8),
-    (r"override\s+(?:your|the)\s+(?:instructions|rules|safety|guidelines)", 0.85),
+    (r"override\s+(?:your|the)\s+(?:instructions|rules|safety|guidelines|system\s+prompt)", 0.85),
     (r"new\s+instructions?\s*[:：]", 0.7),
 ]
 
 _PROMPT_EXTRACTION = [
-    (r"(?:tell|show|reveal|print|repeat)\s+(?:me\s+)?your\s+(?:system\s+)?(?:prompt|instructions)", 0.9),
+    (r"(?:tell|show|reveal|print|repeat)\s+(?:me\s+)?your\s+(?:original\s+|initial\s+|underlying\s+)?(?:system\s+)?(?:prompt|instructions)", 0.9),
     (r"what\s+(?:are|were)\s+your\s+(?:original\s+)?(?:instructions|system\s+prompt)", 0.85),
     (r"(?:reveal|expose|leak)\s+your\s+(?:system|configuration|prompt)", 0.8),
 ]
@@ -47,6 +47,8 @@ _ROLE_PLAY = [
     (r"you\s+are\s+(?:now\s+)?(?:a|an)\s+different\s+\w+", 0.8),
     (r"pretend\s+you\s+(?:are|to\s+be)\s+\w+", 0.7),
     (r"act\s+as\s+(?:a|an|if)\s+\w+", 0.6),
+    # impersonation framing (D contributed)
+    (r"\b(?:impersonate|role\s*play)\s+as\s+\w+", 0.7),
 ]
 
 _FORMAT_MANIPULATION = [
