@@ -11,7 +11,7 @@ import statistics
 from pathlib import Path
 from typing import Any
 
-from agents import AgentInput, AgentOutput, INTERNAL_JSON_OUTPUT_INSTRUCTION, afc_limiter
+from agents import AgentInput, AgentOutput, INTERNAL_JSON_OUTPUT_INSTRUCTION
 from config import settings
 from google.adk.agents import LlmAgent
 from google.adk.tools import FunctionTool
@@ -185,6 +185,24 @@ def evaluate_rent_reasonableness(
             "verdict": "unknown",
             "score": None,
             "message": stats.get("message", "Insufficient data."),
+            "stats": stats,
+        }
+
+    # Sample sizes < 5 make p25/p75 degenerate to min/max, which pushes the
+    # verdict to extreme buckets (excellent_deal / overpriced) on weak evidence.
+    # Refuse to score in that case rather than mislead the tenant.
+    sample_size = stats.get("sample_size", 0)
+    if sample_size < 5:
+        return {
+            "verdict": "insufficient_data",
+            "score": None,
+            "rent_input": rent,
+            "median": stats.get("median"),
+            "suggestion": (
+                f"Only {sample_size} comparable listing(s) in this area — "
+                "not enough to give a reliable rent verdict. Broaden the search "
+                "area or wait for more listings."
+            ),
             "stats": stats,
         }
 
@@ -370,7 +388,6 @@ def create_price_agent(model: str = settings.specialist_model) -> LlmAgent:
         model=model,
         instruction=PRICE_AGENT_INSTRUCTION + INTERNAL_JSON_OUTPUT_INSTRUCTION,
         tools=[FunctionTool(run_price_assessment)],
-        generate_content_config=afc_limiter(2),
         output_key="price_output",
     )
 

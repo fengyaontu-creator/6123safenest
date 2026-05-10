@@ -47,8 +47,10 @@ def test_offline_report_is_human_readable():
 
 
 def test_synthesizer_instruction_reads_adk_state_keys():
-    assert "location_output" in synthesizer_agent.instruction
-    assert "contract_output" in synthesizer_agent.instruction
-    assert "price_output" in synthesizer_agent.instruction
-    assert "risk_output" in synthesizer_agent.instruction
-    assert "{location_output}" not in synthesizer_agent.instruction
+    # ADK interpolates {key} -> session.state[key] before sending to the LLM.
+    # The synthesizer must use this template syntax (not just mention key names),
+    # otherwise the model never actually sees the specialist outputs.
+    assert "{location_output}" in synthesizer_agent.instruction
+    assert "{contract_output}" in synthesizer_agent.instruction
+    assert "{price_output}" in synthesizer_agent.instruction
+    assert "{risk_output}" in synthesizer_agent.instruction

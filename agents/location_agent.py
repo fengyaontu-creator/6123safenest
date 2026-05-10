@@ -7,7 +7,7 @@ import math
 from pathlib import Path
 from typing import Any
 
-from agents import AgentInput, AgentOutput, INTERNAL_JSON_OUTPUT_INSTRUCTION, afc_limiter
+from agents import AgentInput, AgentOutput, INTERNAL_JSON_OUTPUT_INSTRUCTION
 from config import settings
 from google.adk.agents import LlmAgent
 from google.adk.tools import FunctionTool
@@ -310,7 +310,6 @@ def create_location_agent(model: str = settings.specialist_model) -> LlmAgent:
         model=model,
         instruction=LOCATION_AGENT_INSTRUCTION + INTERNAL_JSON_OUTPUT_INSTRUCTION,
         tools=[FunctionTool(run_location_assessment)],
-        generate_content_config=afc_limiter(2),
         output_key="location_output",
     )
 
