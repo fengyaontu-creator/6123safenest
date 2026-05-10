@@ -171,7 +171,7 @@ safenest/
 │   ├── contract_agent.py
 │   ├── price_agent.py
 │   ├── risk_agent.py
-│   └── synthesizer.py          # 汇总报告 + 议价邮件
+│   └── synthesizer.py          # 汇总报告 + 议价建议
 │
 ├── guardrails/
 │   ├── __init__.py

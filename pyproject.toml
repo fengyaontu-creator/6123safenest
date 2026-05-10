@@ -9,17 +9,12 @@ packages = [{ include = "safenest_cli" }]
 [tool.poetry.dependencies]
 python = "^3.11"
 google-adk = "*"
-google-generativeai = "*"
 chromadb = "*"
 pypdf = "*"
 pdfplumber = "*"
 presidio-analyzer = "*"
-presidio-anonymizer = "*"
-pandas = "*"
 pydantic = "*"
 python-dotenv = "*"
-opentelemetry-api = "*"
-opentelemetry-sdk = "*"
 
 [tool.poetry.group.dev.dependencies]
 pytest = "*"
