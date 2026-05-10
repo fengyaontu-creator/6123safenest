@@ -8,11 +8,13 @@
 
 | 维度 | 数值 |
 |------|------|
-| 总测试数 | 63 |
-| 通过 | 63 |
+| 总测试数 | **143** |
+| 通过 | 143 |
 | 失败 | 0 |
 | 测试框架 | pytest |
-| 执行时间 | ~20s |
+| 执行时间 | ~45s |
+
+> 复现命令:`poetry run pytest`(完整跑全部 test 文件)
 
 ---
 
@@ -20,15 +22,20 @@
 
 | 模块 | 测试文件 | 用例数 | 覆盖范围 |
 |------|---------|--------|---------|
-| Location Agent | `test_location.py` | 6 | MRT 匹配 / 通勤估算 / 周边评分 / AgentOutput schema |
-| Contract Agent | `test_contract.py` | 8 | PDF 解析 / CEA KB 检索 / 条款提取 / 关键词重叠度 / 风险评分 / 边缘情况 |
-| Price Agent | `test_price.py` | 7 | CSV 加载 / 区域筛选 / 户型筛选 / 市场统计 / 百分位评分 / 渐进放松 |
 | Risk Agent | `test_risk.py` | 27 | 本地 CSV 查询 / API+CSV 双层验证 / 风险评分 / 风险提示 / 代理名正则提取 / AgentOutput schema |
-| Guardrails | `test_guardrails.py` | 15 | Injection 过滤 / PII 检测 / Scope 越权拒绝 / 降级模式 |
+| Guardrails | `test_guardrails.py` | 22 | Injection(10) / PII(6) / Scope(6),含 Presidio 降级与 redact 替换 |
+| Contract Risk | `test_contract_risk.py` | 20 | 4 类条款(押金/终止/维修/水电)各 low/medium/high 触发 |
+| Contract Clauses | `test_contract_clauses.py` | 13 | 条款抽取 / 关键词归一 / 边界条件 |
+| PDF Parser | `test_pdf_parser.py` | 11 | pypdf 抽取 / pdfplumber 回退 / bytes 输入 / 布局模式 |
+| Contract Agent | `test_contract.py` | 11 | 端到端合同评估 / fallback / output schema |
+| Vector Store | `test_vector_store.py` | 9 | Chroma 入库 / 检索 / k 参数 / 空查询 / 重复 ingest |
+| Contract Compare | `test_contract_compare.py` | 8 | RAG 检索 / 关键词重叠度 / CEA 标准对齐 |
+| Price Agent | `test_price.py` | 6 | CSV 加载 / 区域筛选 / 户型筛选 / 市场统计 / 百分位评分 |
+| Intake Agent | `test_intake_agent.py` | 6 | 字段提取 / fallback regex / 缺字段反问 |
+| Location Agent | `test_location.py` | 5 | MRT 匹配 / 通勤估算 / 周边评分 / AgentOutput schema |
 | Orchestrator | `test_orchestrator_a.py` | 4 | Agent 拓扑 / 离线评估 / 报告格式 / Synthesizer 指令 |
-| PDF Parser | `test_pdf_parser.py` | 8 | pypdf 抽取 / pdfplumber 回退 / bytes 输入 / 布局模式 |
-| Vector Store | `test_vector_store.py` | 8 | Chroma 入库 / 检索 / k 参数 / 空查询 / 重复 ingest |
-| Integration | `test_integration.py` | 2 | 端到端全链路 |
+| Main Runner | `test_main_runner.py` | 1 | CLI 入口 smoke test |
+| Integration | `test_integration.py` | **0(待实现)** | 端到端全链路覆盖在 follow-up sprint 补上 |
 
 ---
 
